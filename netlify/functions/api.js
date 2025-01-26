@@ -12,10 +12,13 @@ exports.handler = async (event) => {
   }
 
   try {
-    const path = event.path.split('/').pop()
+    // Extract path dari URL, hapus '/api/' prefix jika ada
+    const path = event.path.replace(/^\/api\/|^\/.netlify\/functions\/api\/?/, '').split('/')[0]
     const params = event.queryStringParameters || {}
     const body = event.body ? JSON.parse(event.body) : null
     const origin = event.headers.origin
+
+    console.log('Request path:', path) // Untuk debugging
 
     // Check authentication untuk protected routes
     if (PROTECTED_ROUTES.includes(path)) {
@@ -71,6 +74,7 @@ exports.handler = async (event) => {
         gasData = body?.data
         break
       default:
+        console.log('Path not found:', path) // Untuk debugging
         return createResponse(404, { 
           success: false, 
           error: 'Not found' 
