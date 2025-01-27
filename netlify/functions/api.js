@@ -1,6 +1,7 @@
 const { fetchGas } = require('./utils/gas')
 const { verifyToken, getTokenFromRequest, generateToken } = require('./utils/auth')
 const { createResponse } = require('./utils/response')
+const cacheService = require('./utils/cache')
 
 // Routes yang memerlukan authentication
 const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery']
@@ -18,9 +19,9 @@ exports.handler = async (event) => {
     const body = event.body ? JSON.parse(event.body) : null
     const origin = event.headers.origin
 
-    console.log('Request path:', path) // Untuk debugging
-    console.log('Request body:', body) // Untuk debugging
-    console.log('Request params:', params) // Untuk debugging
+    console.log('Request path:', path)
+    console.log('Request body:', body)
+    console.log('Request params:', params)
 
     // Check authentication untuk protected routes
     if (PROTECTED_ROUTES.includes(path)) {
@@ -40,7 +41,6 @@ exports.handler = async (event) => {
         }, { origin })
       }
 
-      // Add user info to body if it exists
       if (body && decoded) {
         body.data = {
           ...body.data,
@@ -51,6 +51,7 @@ exports.handler = async (event) => {
 
     let gasAction
     let gasData = null
+    let useCache = false
 
     switch (path) {
       case 'branches':
@@ -74,13 +75,53 @@ exports.handler = async (event) => {
         const day = dateObj.getDate()
         const year = dateObj.getFullYear()
         const formattedDate = `${month}/${day}/${year}`
+
+        // Check if ranged parameter is true
+        if (params.ranged === 'true') {
+          gasAction = 'getRangedInvoiceList'
+          useCache = true
+        } else {
+          gasAction = 'getInvoiceList'
+        }
         
-        gasAction = 'getInvoiceList'
         gasData = { 
           branch: params.branch,
           date: formattedDate
         }
         break
+      case 'cache':
+        // Endpoint untuk manajemen cache
+        if (!params.action) {
+          return createResponse(400, {
+            success: false,
+            error: 'Cache action required'
+          }, { origin })
+        }
+
+        switch (params.action) {
+          case 'stats':
+            return createResponse(200, {
+              success: true,
+              data: cacheService.getStats()
+            }, { origin })
+          case 'clear':
+            if (params.pattern) {
+              const cleared = cacheService.invalidateByPattern(params.pattern)
+              return createResponse(200, {
+                success: true,
+                message: `Cleared ${cleared} cache entries matching pattern: ${params.pattern}`
+              }, { origin })
+            }
+            return createResponse(400, {
+              success: false,
+              error: 'Pattern required for cache clear'
+            }, { origin })
+          default:
+            return createResponse(400, {
+              success: false,
+              error: 'Invalid cache action'
+            }, { origin })
+        }
       case 'login':
         gasAction = 'login'
         gasData = body?.data
@@ -106,16 +147,21 @@ exports.handler = async (event) => {
         gasData = body?.data
         break
       default:
-        console.log('Path not found:', path) // Untuk debugging
+        console.log('Path not found:', path)
         return createResponse(404, { 
           success: false, 
           error: 'Not found' 
         }, { origin })
     }
 
-    console.log('Calling GAS with action:', gasAction, 'and data:', gasData) // Untuk debugging
+    console.log('Calling GAS with action:', gasAction, 'and data:', gasData)
 
-    const gasResponse = await fetchGas(gasAction, gasData)
+    let gasResponse
+    if (useCache) {
+      gasResponse = await cacheService.getOrFetchInvoices(fetchGas, gasData.branch, gasData.date)
+    } else {
+      gasResponse = await fetchGas(gasAction, gasData)
+    }
     
     if (!gasResponse.success) {
       const statusCode = gasResponse.error?.includes('tidak ditemukan') ? 404 :
@@ -125,7 +171,6 @@ exports.handler = async (event) => {
       return createResponse(statusCode, gasResponse, { origin })
     }
 
-    // Generate token for successful login
     if (path === 'login' && gasResponse.success) {
       const userData = gasResponse.data
       const token = generateToken({
@@ -134,8 +179,6 @@ exports.handler = async (event) => {
         role: userData.role,
         branch: userData.branch
       })
-
-      // Add token to response
       gasResponse.data.token = token
     }
     

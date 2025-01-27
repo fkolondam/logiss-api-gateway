@@ -1,9 +1,40 @@
-// Invoice List
-function getInvoiceList(branch, date) {
+// Helper Functions untuk Date Range
+function getDateRange(endDate) {
+  const end = new Date(endDate);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 7);
+  return {
+    start: start,
+    end: end
+  };
+}
+
+function formatDateMDY(date) {
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const year = date.getFullYear();
+  return `${month}/${day}/${year}`;
+}
+
+function isDateInRange(testDate, startDate, endDate) {
+  const test = new Date(testDate);
+  test.setHours(0, 0, 0, 0);
+  
+  const start = new Date(startDate);
+  start.setHours(0, 0, 0, 0);
+  
+  const end = new Date(endDate);
+  end.setHours(0, 0, 0, 0);
+  
+  return test >= start && test <= end;
+}
+
+// Fungsi baru untuk mendapatkan invoice dengan range 7 hari
+function getRangedInvoiceList(branch, date) {
   try {
     // Start execution time logging
     const startTime = new Date().getTime();
-    Logger.log(`Starting getInvoiceList for branch: ${branch}, date: ${date}`);
+    Logger.log(`Starting getRangedInvoiceList for branch: ${branch}, end date: ${date}`);
 
     // Validate required parameters
     if (!branch || !date) {
@@ -18,9 +49,11 @@ function getInvoiceList(branch, date) {
       return sendError('Format tanggal tidak valid. Gunakan format m/d/yyyy');
     }
 
-    const month = dateParts[0];
-    const day = dateParts[1];
-    const year = dateParts[2];
+    // Get date range
+    const endDate = new Date(dateParts[2], dateParts[0] - 1, dateParts[1]);
+    const dateRange = getDateRange(endDate);
+    
+    Logger.log(`Fetching invoices from ${formatDateMDY(dateRange.start)} to ${formatDateMDY(dateRange.end)}`);
 
     // Get spreadsheet and data
     const spreadsheet = SpreadsheetApp.openById(INVOICE_SHEET_ID);
@@ -35,44 +68,74 @@ function getInvoiceList(branch, date) {
 
     // Process data
     const invoices = [];
+    let processedRows = 0;
+    let matchingBranch = 0;
+    let inDateRange = 0;
+
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
+      processedRows++;
       
       // Early exit if not matching branch
       if (row[3] !== branch) continue;
+      matchingBranch++;
       
-      // Convert to string for comparison
-      const rowYear = String(row[0]);
-      const rowMonth = String(row[1]);
-      const rowDay = String(row[2]);
+      // Create date from row data
+      const rowDate = new Date(row[0], row[1] - 1, row[2]); // year, month (0-based), day
       
-      if (rowYear === year && rowMonth === month && rowDay === day) {
+      // Check if date is in range
+      if (isDateInRange(rowDate, dateRange.start, dateRange.end)) {
+        inDateRange++;
         invoices.push({
           branchName: row[3],
-          tanggalLengkap: `${month}/${day}/${year}`,
+          tanggalLengkap: formatDateMDY(rowDate),
           nomorInvoice: row[13],
           namaCustomer: row[10],
           prinsipal: row[5]
         });
       }
+
+      // Log progress every 10000 rows
+      if (processedRows % 10000 === 0) {
+        Logger.log(`Processed ${processedRows} rows, found ${matchingBranch} matching branch, ${inDateRange} in date range`);
+      }
     }
 
-    Logger.log(`Found ${invoices.length} matching invoices`);
+    // Sort invoices by date (newest first)
+    invoices.sort((a, b) => {
+      const dateA = new Date(a.tanggalLengkap);
+      const dateB = new Date(b.tanggalLengkap);
+      return dateB - dateA;
+    });
 
-    // Prepare response
+    Logger.log(`Final results: ${invoices.length} invoices found`);
+    Logger.log(`Total rows processed: ${processedRows}`);
+    Logger.log(`Matching branch: ${matchingBranch}`);
+    Logger.log(`In date range: ${inDateRange}`);
+
+    // Prepare response with metadata
     const response = {
       success: true,
       data: {
         invoices: invoices,
         total: invoices.length,
         branch: branch,
-        date: date
+        dateRange: {
+          start: formatDateMDY(dateRange.start),
+          end: formatDateMDY(dateRange.end)
+        },
+        metadata: {
+          processedRows: processedRows,
+          matchingBranch: matchingBranch,
+          inDateRange: inDateRange,
+          executionTime: new Date().getTime() - startTime
+        }
       }
     };
 
     // Log execution time
     const endTime = new Date().getTime();
-    Logger.log(`getInvoiceList completed in ${endTime - startTime}ms`);
+    Logger.log(`getRangedInvoiceList completed in ${endTime - startTime}ms`);
 
     // Clear any remaining operations and force completion
     SpreadsheetApp.flush();
@@ -83,7 +146,7 @@ function getInvoiceList(branch, date) {
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
-    Logger.log(`Error in getInvoiceList: ${error}`);
+    Logger.log(`Error in getRangedInvoiceList: ${error}`);
     
     // Force completion even on error
     SpreadsheetApp.flush();
@@ -94,5 +157,34 @@ function getInvoiceList(branch, date) {
         message: `Gagal mengambil data invoice: ${error.toString()}`
       }))
       .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// Tambahkan ke doGet handler
+function doGet(e) {
+  // Validate API Key from URL parameter
+  const apiKey = getParam(e, 'key')
+  if (apiKey !== API_KEY) {
+    return sendError('Invalid API Key')
+  }
+
+  const action = getParam(e, 'action')
+  console.log('doGet action:', action)
+
+  switch (action) {
+    case 'getBranchConfig':
+      return getBranchConfig()
+    case 'getInvoiceList':
+      return getInvoiceList(getParam(e, 'branch'), getParam(e, 'date'))
+    case 'getRangedInvoiceList':  // Add new action
+      return getRangedInvoiceList(getParam(e, 'branch'), getParam(e, 'date'))
+    case 'getVehicleData':
+      return getVehicleData(getParam(e, 'branch'))
+    case 'activateAccount':
+      return activateAccount(getParam(e, 'token'))
+    case 'getActiveSessions':
+      return getActiveSessions(getParam(e, 'branch'))
+    default:
+      return sendError('Invalid action')
   }
 }
