@@ -3076,7 +3076,8 @@ var require_gas = __commonJS({
         const responseText = await response.text();
         console.log("GAS Raw Response:", {
           status: response.status,
-          text: responseText
+          text: responseText.substring(0, 1e3)
+          // Limit log size
         });
         if (action === "activateAccount") {
           if (responseText.includes("Token aktivasi tidak valid")) {
@@ -3109,19 +3110,12 @@ var require_gas = __commonJS({
         if (responseData.success === false) {
           throw new Error(responseData.message || "GAS request failed");
         }
-        if (responseData.message) {
-          return {
-            success: true,
-            message: responseData.message
-          };
-        }
         return {
           success: true,
           data: responseData.data || responseData
         };
       } catch (error) {
         console.error(`GAS Error (${action}):`, error);
-        console.error("Error stack:", error.stack);
         return {
           success: false,
           error: error.message || "Internal server error"
@@ -7238,10 +7232,21 @@ exports.handler = async (event) => {
         gasData = { branch: params.branch };
         break;
       case "invoices":
+        const dateObj = new Date(params.date);
+        if (isNaN(dateObj.getTime())) {
+          return createResponse(400, {
+            success: false,
+            error: "Format tanggal tidak valid. Gunakan format YYYY-MM-DD"
+          }, { origin: origin2 });
+        }
+        const month = dateObj.getMonth() + 1;
+        const day = dateObj.getDate();
+        const year = dateObj.getFullYear();
+        const formattedDate = `${month}/${day}/${year}`;
         gasAction = "getInvoiceList";
         gasData = {
           branch: params.branch,
-          date: params.date
+          date: formattedDate
         };
         break;
       case "login":

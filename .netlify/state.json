@@ -1,20 +1,20 @@
 {
 	"geolocation": {
 		"data": {
-			"city": "Jakarta",
+			"city": "Manado",
 			"country": {
 				"code": "ID",
 				"name": "Indonesia"
 			},
 			"subdivision": {
-				"code": "JK",
-				"name": "Jakarta"
+				"code": "SA",
+				"name": "North Sulawesi"
 			},
-			"timezone": "Asia/Jakarta",
-			"latitude": -6.2114,
-			"longitude": 106.8446,
-			"postalCode": "11730"
+			"timezone": "Asia/Makassar",
+			"latitude": 1.481,
+			"longitude": 124.8518,
+			"postalCode": "95111"
 		},
-		"timestamp": 1737877286050
+		"timestamp": 1737963835756
 	}
 }

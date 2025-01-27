@@ -61,10 +61,24 @@ exports.handler = async (event) => {
         gasData = { branch: params.branch }
         break
       case 'invoices':
+        // Convert YYYY-MM-DD to M/D/YYYY
+        const dateObj = new Date(params.date)
+        if (isNaN(dateObj.getTime())) {
+          return createResponse(400, {
+            success: false,
+            error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
+          }, { origin })
+        }
+        
+        const month = dateObj.getMonth() + 1
+        const day = dateObj.getDate()
+        const year = dateObj.getFullYear()
+        const formattedDate = `${month}/${day}/${year}`
+        
         gasAction = 'getInvoiceList'
         gasData = { 
           branch: params.branch,
-          date: params.date
+          date: formattedDate
         }
         break
       case 'login':

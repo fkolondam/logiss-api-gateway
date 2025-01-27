@@ -62,7 +62,7 @@ async function fetchGas(action, data = null) {
     // Debug logs for raw response
     console.log('GAS Raw Response:', {
       status: response.status,
-      text: responseText
+      text: responseText.substring(0, 1000) // Limit log size
     })
 
     // Special handling for activation response which returns plain text
@@ -104,22 +104,12 @@ async function fetchGas(action, data = null) {
       throw new Error(responseData.message || 'GAS request failed')
     }
     
-    // If response has message, return it directly
-    if (responseData.message) {
-      return {
-        success: true,
-        message: responseData.message
-      }
-    }
-    
-    // Otherwise return data
     return {
       success: true,
       data: responseData.data || responseData
     }
   } catch (error) {
     console.error(`GAS Error (${action}):`, error)
-    console.error('Error stack:', error.stack)
     return {
       success: false,
       error: error.message || 'Internal server error'
