@@ -1,9 +1,9 @@
 const { fetchGas } = require('./utils/gas')
-const { verifyToken, getTokenFromRequest } = require('./utils/auth')
+const { verifyToken, getTokenFromRequest, generateToken } = require('./utils/auth')
 const { createResponse } = require('./utils/response')
 
 // Routes yang memerlukan authentication
-const PROTECTED_ROUTES = ['checkin', 'delivery']
+const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery']
 
 exports.handler = async (event) => {
   // Handle CORS preflight
@@ -19,6 +19,8 @@ exports.handler = async (event) => {
     const origin = event.headers.origin
 
     console.log('Request path:', path) // Untuk debugging
+    console.log('Request body:', body) // Untuk debugging
+    console.log('Request params:', params) // Untuk debugging
 
     // Check authentication untuk protected routes
     if (PROTECTED_ROUTES.includes(path)) {
@@ -36,6 +38,14 @@ exports.handler = async (event) => {
           success: false, 
           error: 'Invalid or expired token' 
         }, { origin })
+      }
+
+      // Add user info to body if it exists
+      if (body && decoded) {
+        body.data = {
+          ...body.data,
+          username: decoded.email
+        }
       }
     }
 
@@ -65,8 +75,16 @@ exports.handler = async (event) => {
         gasAction = 'register'
         gasData = body?.data
         break
+      case 'activate':
+        gasAction = 'activateAccount'
+        gasData = { token: params.token }
+        break
       case 'checkin':
         gasAction = 'submitCheckIn'
+        gasData = body?.data
+        break
+      case 'checkout':
+        gasAction = 'submitCheckOut'
         gasData = body?.data
         break
       case 'delivery':
@@ -81,10 +99,30 @@ exports.handler = async (event) => {
         }, { origin })
     }
 
+    console.log('Calling GAS with action:', gasAction, 'and data:', gasData) // Untuk debugging
+
     const gasResponse = await fetchGas(gasAction, gasData)
     
     if (!gasResponse.success) {
-      return createResponse(500, gasResponse, { origin })
+      const statusCode = gasResponse.error?.includes('tidak ditemukan') ? 404 :
+                        gasResponse.error?.includes('tidak lengkap') ? 400 :
+                        500
+      
+      return createResponse(statusCode, gasResponse, { origin })
+    }
+
+    // Generate token for successful login
+    if (path === 'login' && gasResponse.success) {
+      const userData = gasResponse.data
+      const token = generateToken({
+        email: userData.email,
+        fullName: userData.fullName,
+        role: userData.role,
+        branch: userData.branch
+      })
+
+      // Add token to response
+      gasResponse.data.token = token
     }
     
     return createResponse(200, gasResponse, { origin })
