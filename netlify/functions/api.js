@@ -7,23 +7,20 @@ const cacheService = require('./utils/cache')
 const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery']
 
 exports.handler = async (event) => {
-  // Handle CORS preflight
   if (event.httpMethod === 'OPTIONS') {
     return createResponse(204)
   }
 
   try {
-    // Extract path dari URL, hapus '/api/' prefix jika ada
     const path = event.path.replace(/^\/api\/|^\/.netlify\/functions\/api\/?/, '').split('/')[0]
     const params = event.queryStringParameters || {}
     const body = event.body ? JSON.parse(event.body) : null
     const origin = event.headers.origin
 
     console.log('Request path:', path)
-    console.log('Request body:', body)
     console.log('Request params:', params)
+    console.log('Request body:', body)
 
-    // Check authentication untuk protected routes
     if (PROTECTED_ROUTES.includes(path)) {
       const token = getTokenFromRequest(event)
       if (!token) {
@@ -49,20 +46,31 @@ exports.handler = async (event) => {
       }
     }
 
-    let gasAction
-    let gasData = null
-    let useCache = false
+    let response
 
     switch (path) {
       case 'branches':
-        gasAction = 'getBranchConfig'
+        response = await cacheService.getOrFetchBranches(fetchGas)
         break
+
       case 'vehicles':
-        gasAction = 'getVehicleData'
-        gasData = { branch: params.branch }
+        if (!params.branch) {
+          return createResponse(400, {
+            success: false,
+            error: 'Branch parameter required'
+          }, { origin })
+        }
+        response = await cacheService.getOrFetchVehicles(fetchGas, params.branch)
         break
+
       case 'invoices':
-        // Convert YYYY-MM-DD to M/D/YYYY
+        if (!params.branch || !params.date) {
+          return createResponse(400, {
+            success: false,
+            error: 'Branch dan date parameter diperlukan'
+          }, { origin })
+        }
+
         const dateObj = new Date(params.date)
         if (isNaN(dateObj.getTime())) {
           return createResponse(400, {
@@ -75,22 +83,16 @@ exports.handler = async (event) => {
         const day = dateObj.getDate()
         const year = dateObj.getFullYear()
         const formattedDate = `${month}/${day}/${year}`
-
-        // Check if ranged parameter is true
-        if (params.ranged === 'true') {
-          gasAction = 'getRangedInvoiceList'
-          useCache = true
-        } else {
-          gasAction = 'getInvoiceList'
-        }
         
-        gasData = { 
-          branch: params.branch,
-          date: formattedDate
-        }
+        response = await cacheService.getOrFetchInvoices(
+          fetchGas,
+          params.branch,
+          formattedDate,
+          params.ranged === 'true'
+        )
         break
+
       case 'cache':
-        // Endpoint untuk manajemen cache
         if (!params.action) {
           return createResponse(400, {
             success: false,
@@ -104,48 +106,67 @@ exports.handler = async (event) => {
               success: true,
               data: cacheService.getStats()
             }, { origin })
+
           case 'clear':
-            if (params.pattern) {
-              const cleared = cacheService.invalidateByPattern(params.pattern)
-              return createResponse(200, {
-                success: true,
-                message: `Cleared ${cleared} cache entries matching pattern: ${params.pattern}`
+            if (!params.pattern) {
+              return createResponse(400, {
+                success: false,
+                error: 'Pattern required for cache clear'
               }, { origin })
             }
-            return createResponse(400, {
-              success: false,
-              error: 'Pattern required for cache clear'
+            const cleared = cacheService.invalidateByPattern(params.pattern)
+            return createResponse(200, {
+              success: true,
+              message: `Cleared ${cleared} cache entries matching pattern: ${params.pattern}`
             }, { origin })
+
           default:
             return createResponse(400, {
               success: false,
               error: 'Invalid cache action'
             }, { origin })
         }
+
       case 'login':
-        gasAction = 'login'
-        gasData = body?.data
+        response = await fetchGas('login', body?.data)
+        if (response.success) {
+          const userData = response.data
+          const token = generateToken({
+            email: userData.email,
+            fullName: userData.fullName,
+            role: userData.role,
+            branch: userData.branch
+          })
+          response.data.token = token
+        }
         break
+
       case 'register':
-        gasAction = 'register'
-        gasData = body?.data
+        response = await fetchGas('register', body?.data)
         break
+
       case 'activate':
-        gasAction = 'activateAccount'
-        gasData = { token: params.token }
+        response = await fetchGas('activateAccount', { token: params.token })
         break
+
       case 'checkin':
-        gasAction = 'submitCheckIn'
-        gasData = body?.data
+        response = await fetchGas('submitCheckIn', body?.data)
+        if (response.success && body?.data?.branch) {
+          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
+        }
         break
+
       case 'checkout':
-        gasAction = 'submitCheckOut'
-        gasData = body?.data
+        response = await fetchGas('submitCheckOut', body?.data)
+        if (response.success && body?.data?.branch) {
+          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
+        }
         break
+
       case 'delivery':
-        gasAction = 'submitForm'
-        gasData = body?.data
+        response = await fetchGas('submitForm', body?.data)
         break
+
       default:
         console.log('Path not found:', path)
         return createResponse(404, { 
@@ -153,36 +174,16 @@ exports.handler = async (event) => {
           error: 'Not found' 
         }, { origin })
     }
-
-    console.log('Calling GAS with action:', gasAction, 'and data:', gasData)
-
-    let gasResponse
-    if (useCache) {
-      gasResponse = await cacheService.getOrFetchInvoices(fetchGas, gasData.branch, gasData.date)
-    } else {
-      gasResponse = await fetchGas(gasAction, gasData)
-    }
     
-    if (!gasResponse.success) {
-      const statusCode = gasResponse.error?.includes('tidak ditemukan') ? 404 :
-                        gasResponse.error?.includes('tidak lengkap') ? 400 :
+    if (!response.success) {
+      const statusCode = response.error?.includes('tidak ditemukan') ? 404 :
+                        response.error?.includes('tidak lengkap') ? 400 :
                         500
       
-      return createResponse(statusCode, gasResponse, { origin })
-    }
-
-    if (path === 'login' && gasResponse.success) {
-      const userData = gasResponse.data
-      const token = generateToken({
-        email: userData.email,
-        fullName: userData.fullName,
-        role: userData.role,
-        branch: userData.branch
-      })
-      gasResponse.data.token = token
+      return createResponse(statusCode, response, { origin })
     }
     
-    return createResponse(200, gasResponse, { origin })
+    return createResponse(200, response, { origin })
   } catch (error) {
     console.error('API Error:', error)
     return createResponse(500, { 

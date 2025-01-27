@@ -2,12 +2,23 @@ const NodeCache = require('node-cache');
 
 // Cache dengan TTL 1 jam dan check period 10 menit
 const cache = new NodeCache({
-  stdTTL: 3600, // 1 hour in seconds
-  checkperiod: 600 // 10 minutes in seconds
+  stdTTL: 3600,
+  checkperiod: 600
 });
 
-// Key generator untuk invoice cache
-const getInvoiceCacheKey = (branch, date) => `invoice_${branch}_${date}`;
+// Key generators untuk berbagai tipe data
+const getCacheKey = (type, params) => {
+  switch (type) {
+    case 'invoice':
+      return `invoice_${params.branch}_${params.date}${params.ranged ? '_ranged' : ''}`;
+    case 'vehicle':
+      return `vehicle_${params.branch}`;
+    case 'branch':
+      return 'branch_config';
+    default:
+      return `${type}_${JSON.stringify(params)}`;
+  }
+};
 
 // Cache service
 const cacheService = {
@@ -23,9 +34,9 @@ const cacheService = {
     return cache.del(key);
   },
 
-  // Fungsi untuk mendapatkan invoice dari cache atau fetch baru
-  getOrFetchInvoices: async (fetchGas, branch, date) => {
-    const cacheKey = getInvoiceCacheKey(branch, date);
+  // Fungsi generik untuk get atau fetch data
+  getOrFetchData: async (type, params, fetchGas, action) => {
+    const cacheKey = getCacheKey(type, params);
     const cachedData = cache.get(cacheKey);
 
     if (cachedData) {
@@ -34,7 +45,7 @@ const cacheService = {
     }
 
     console.log(`Cache miss for ${cacheKey}, fetching from GAS`);
-    const response = await fetchGas('getRangedInvoiceList', { branch, date });
+    const response = await fetchGas(action, params);
 
     if (response.success) {
       console.log(`Caching response for ${cacheKey}`);
@@ -42,6 +53,34 @@ const cacheService = {
     }
 
     return response;
+  },
+
+  // Fungsi spesifik untuk tiap tipe data
+  getOrFetchInvoices: async (fetchGas, branch, date, ranged = false) => {
+    return cacheService.getOrFetchData(
+      'invoice',
+      { branch, date, ranged },
+      fetchGas,
+      ranged ? 'getRangedInvoiceList' : 'getInvoiceList'
+    );
+  },
+
+  getOrFetchVehicles: async (fetchGas, branch) => {
+    return cacheService.getOrFetchData(
+      'vehicle',
+      { branch },
+      fetchGas,
+      'getVehicleData'
+    );
+  },
+
+  getOrFetchBranches: async (fetchGas) => {
+    return cacheService.getOrFetchData(
+      'branch',
+      {},
+      fetchGas,
+      'getBranchConfig'
+    );
   },
 
   // Fungsi untuk invalidate cache berdasarkan pattern
