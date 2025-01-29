@@ -16,7 +16,7 @@ async function fetchGas(action, data = null) {
     }
 
     const url = new URL(GAS_URL)
-    
+
     // Determine method based on action type
     const isPostAction = ['login', 'register', 'submitCheckIn', 'submitCheckOut', 'submitForm'].includes(action)
     const options = {
@@ -47,7 +47,7 @@ async function fetchGas(action, data = null) {
         })
       }
     }
-    
+
     // Debug logs
     console.log('GAS Request Details:', {
       method: options.method,
@@ -58,7 +58,7 @@ async function fetchGas(action, data = null) {
 
     const response = await fetch(url.toString(), options)
     const responseText = await response.text()
-    
+
     // Debug logs for raw response
     console.log('GAS Raw Response:', {
       status: response.status,
@@ -90,7 +90,7 @@ async function fetchGas(action, data = null) {
       console.log('Raw response that failed to parse:', responseText)
       throw new Error('Invalid JSON response from GAS')
     }
-    
+
     // Debug logs for parsed response
     console.log('GAS Parsed Response:', {
       status: response.status,
@@ -103,7 +103,7 @@ async function fetchGas(action, data = null) {
     if (responseData.success === false) {
       throw new Error(responseData.message || 'GAS request failed')
     }
-    
+
     return {
       success: true,
       data: responseData.data || responseData

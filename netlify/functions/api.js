@@ -24,17 +24,17 @@ exports.handler = async (event) => {
     if (PROTECTED_ROUTES.includes(path)) {
       const token = getTokenFromRequest(event)
       if (!token) {
-        return createResponse(401, { 
-          success: false, 
-          error: 'Authentication required' 
+        return createResponse(401, {
+          success: false,
+          error: 'Authentication required'
         }, { origin })
       }
 
       const decoded = verifyToken(token)
       if (!decoded) {
-        return createResponse(401, { 
-          success: false, 
-          error: 'Invalid or expired token' 
+        return createResponse(401, {
+          success: false,
+          error: 'Invalid or expired token'
         }, { origin })
       }
 
@@ -78,12 +78,12 @@ exports.handler = async (event) => {
             error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
           }, { origin })
         }
-        
+
         const month = dateObj.getMonth() + 1
         const day = dateObj.getDate()
         const year = dateObj.getFullYear()
         const formattedDate = `${month}/${day}/${year}`
-        
+
         response = await cacheService.getOrFetchInvoices(
           fetchGas,
           params.branch,
@@ -169,26 +169,26 @@ exports.handler = async (event) => {
 
       default:
         console.log('Path not found:', path)
-        return createResponse(404, { 
-          success: false, 
-          error: 'Not found' 
+        return createResponse(404, {
+          success: false,
+          error: 'Not found'
         }, { origin })
     }
-    
+
     if (!response.success) {
       const statusCode = response.error?.includes('tidak ditemukan') ? 404 :
                         response.error?.includes('tidak lengkap') ? 400 :
                         500
-      
+
       return createResponse(statusCode, response, { origin })
     }
-    
+
     return createResponse(200, response, { origin })
   } catch (error) {
     console.error('API Error:', error)
-    return createResponse(500, { 
-      success: false, 
-      error: error.message || 'Internal server error' 
+    return createResponse(500, {
+      success: false,
+      error: error.message || 'Internal server error'
     }, { origin })
   }
 }
