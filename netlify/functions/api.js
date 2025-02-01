@@ -4,7 +4,7 @@ const { createResponse } = require('./utils/response')
 const cacheService = require('./utils/cache')
 
 // Routes yang memerlukan authentication
-const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery']
+const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses']
 
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
@@ -90,6 +90,51 @@ exports.handler = async (event) => {
           formattedDate,
           params.ranged === 'true'
         )
+        break
+
+      case 'expenses':
+        // Handle expenses endpoints
+        switch (event.httpMethod) {
+          case 'GET':
+            if (params.context) {
+              // Get filtered expenses by context (e.g., vehicle plate)
+              response = await fetchGas('getFilteredExpenses', {
+                context: params.context,
+                range: params.range
+              })
+            } else {
+              // Get expenses by branch and category
+              if (!params.branch) {
+                return createResponse(400, {
+                  success: false,
+                  error: 'Parameter branch diperlukan'
+                }, { origin })
+              }
+              response = await fetchGas('getExpenses', {
+                branch: params.branch,
+                category: params.category,
+                range: params.range
+              })
+            }
+            break
+
+          case 'POST':
+            // Submit new expense
+            if (!body?.data) {
+              return createResponse(400, {
+                success: false,
+                error: 'Data expenses diperlukan'
+              }, { origin })
+            }
+            response = await fetchGas('submitExpenses', body.data)
+            break
+
+          default:
+            return createResponse(405, {
+              success: false,
+              error: 'Method not allowed'
+            }, { origin })
+        }
         break
 
       case 'cache':
