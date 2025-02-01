@@ -15,6 +15,11 @@ const getCacheKey = (type, params) => {
       return `vehicle_${params.branch}`;
     case 'branch':
       return 'branch_config';
+    case 'expenses':
+      if (params.context) {
+        return `expenses_context_${params.context}_${params.range || 'today'}`;
+      }
+      return `expenses_${params.branch}_${params.category || 'all'}_${params.range || 'today'}`;
     default:
       return `${type}_${JSON.stringify(params)}`;
   }
@@ -80,6 +85,24 @@ const cacheService = {
       {},
       fetchGas,
       'getBranchConfig'
+    );
+  },
+
+  // Fungsi baru untuk expenses
+  getOrFetchExpenses: async (fetchGas, params) => {
+    if (params.context) {
+      return cacheService.getOrFetchData(
+        'expenses',
+        { context: params.context, range: params.range },
+        fetchGas,
+        'getFilteredExpenses'
+      );
+    }
+    return cacheService.getOrFetchData(
+      'expenses',
+      { branch: params.branch, category: params.category, range: params.range },
+      fetchGas,
+      'getExpenses'
     );
   },
 

@@ -16,9 +16,17 @@ async function fetchGas(action, data = null) {
     }
 
     const url = new URL(GAS_URL)
-
+    
     // Determine method based on action type
-    const isPostAction = ['login', 'register', 'submitCheckIn', 'submitCheckOut', 'submitForm'].includes(action)
+    const isPostAction = [
+      'login', 
+      'register', 
+      'submitCheckIn', 
+      'submitCheckOut', 
+      'submitForm',
+      'submitExpenses' // Add new post action
+    ].includes(action)
+
     const options = {
       method: isPostAction ? 'POST' : 'GET',
       headers: {
@@ -34,6 +42,13 @@ async function fetchGas(action, data = null) {
     if (data) {
       if (isPostAction) {
         // For POST requests, send data in body
+        // Handle base64 data for file uploads
+        if (action === 'submitExpenses' && data.receiptPhoto) {
+          // Convert base64 to proper format for GAS
+          const base64Data = data.receiptPhoto.split(',')[1] || data.receiptPhoto
+          data.receiptPhoto = base64Data
+        }
+        
         options.body = JSON.stringify({
           action,
           data
@@ -42,12 +57,17 @@ async function fetchGas(action, data = null) {
         // For GET requests, append data to URL params
         Object.entries(data).forEach(([key, value]) => {
           if (value) {
-            url.searchParams.append(key, value)
+            // Handle date range parameter
+            if (key === 'range' && Array.isArray(value)) {
+              url.searchParams.append(key, value.join(','))
+            } else {
+              url.searchParams.append(key, value)
+            }
           }
         })
       }
     }
-
+    
     // Debug logs
     console.log('GAS Request Details:', {
       method: options.method,
@@ -58,7 +78,7 @@ async function fetchGas(action, data = null) {
 
     const response = await fetch(url.toString(), options)
     const responseText = await response.text()
-
+    
     // Debug logs for raw response
     console.log('GAS Raw Response:', {
       status: response.status,
@@ -90,7 +110,7 @@ async function fetchGas(action, data = null) {
       console.log('Raw response that failed to parse:', responseText)
       throw new Error('Invalid JSON response from GAS')
     }
-
+    
     // Debug logs for parsed response
     console.log('GAS Parsed Response:', {
       status: response.status,
@@ -102,6 +122,23 @@ async function fetchGas(action, data = null) {
     // Handle both success and error responses from GAS
     if (responseData.success === false) {
       throw new Error(responseData.message || 'GAS request failed')
+    }
+    
+    // Special handling for expenses responses
+    if (action.startsWith('get') && action.includes('Expenses')) {
+      // Ensure expenses data is properly formatted
+      const expenses = responseData.data?.expenses || []
+      expenses.forEach(expense => {
+        // Convert amount to number if it's a string
+        if (typeof expense.amount === 'string') {
+          expense.amount = parseFloat(expense.amount)
+        }
+        // Ensure date is in correct format
+        if (expense.date) {
+          const dateObj = new Date(expense.date)
+          expense.date = `${dateObj.getMonth() + 1}/${dateObj.getDate()}/${dateObj.getFullYear()}`
+        }
+      })
     }
 
     return {
