@@ -24,7 +24,7 @@ async function fetchGas(action, data = null) {
       'submitCheckIn', 
       'submitCheckOut', 
       'submitForm',
-      'submitExpenses' // Add new post action
+      'submitExpenses'
     ].includes(action)
 
     const options = {
@@ -41,17 +41,30 @@ async function fetchGas(action, data = null) {
     // Handle data based on method
     if (data) {
       if (isPostAction) {
-        // For POST requests, send data in body
         // Handle base64 data for file uploads
+        let processedData = { ...data }
+        
+        // Handle check-in photo
+        if (action === 'submitCheckIn' && data.checkInPhoto) {
+          const base64Data = data.checkInPhoto.split(',')[1] || data.checkInPhoto
+          processedData.checkInPhoto = base64Data
+        }
+        
+        // Handle check-out photo
+        if (action === 'submitCheckOut' && data.checkOutPhoto) {
+          const base64Data = data.checkOutPhoto.split(',')[1] || data.checkOutPhoto
+          processedData.checkOutPhoto = base64Data
+        }
+        
+        // Handle expense receipt
         if (action === 'submitExpenses' && data.receiptPhoto) {
-          // Convert base64 to proper format for GAS
           const base64Data = data.receiptPhoto.split(',')[1] || data.receiptPhoto
-          data.receiptPhoto = base64Data
+          processedData.receiptPhoto = base64Data
         }
         
         options.body = JSON.stringify({
           action,
-          data
+          data: processedData
         })
       } else {
         // For GET requests, append data to URL params
@@ -124,19 +137,30 @@ async function fetchGas(action, data = null) {
       throw new Error(responseData.message || 'GAS request failed')
     }
     
+    // Special handling for responses with photo URLs
+    if (['submitCheckIn', 'submitCheckOut'].includes(action)) {
+      // Ensure photo URLs are properly formatted
+      if (responseData.data?.checkInPhotoUrl) {
+        responseData.data.checkInPhotoUrl = responseData.data.checkInPhotoUrl.replace(/\\/g, '')
+      }
+      if (responseData.data?.checkOutPhotoUrl) {
+        responseData.data.checkOutPhotoUrl = responseData.data.checkOutPhotoUrl.replace(/\\/g, '')
+      }
+    }
+
     // Special handling for expenses responses
     if (action.startsWith('get') && action.includes('Expenses')) {
-      // Ensure expenses data is properly formatted
       const expenses = responseData.data?.expenses || []
       expenses.forEach(expense => {
-        // Convert amount to number if it's a string
         if (typeof expense.amount === 'string') {
           expense.amount = parseFloat(expense.amount)
         }
-        // Ensure date is in correct format
         if (expense.date) {
           const dateObj = new Date(expense.date)
           expense.date = `${dateObj.getMonth() + 1}/${dateObj.getDate()}/${dateObj.getFullYear()}`
+        }
+        if (expense.receiptPhotoUrl) {
+          expense.receiptPhotoUrl = expense.receiptPhotoUrl.replace(/\\/g, '')
         }
       })
     }

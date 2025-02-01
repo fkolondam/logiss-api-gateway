@@ -93,17 +93,14 @@ exports.handler = async (event) => {
         break
 
       case 'expenses':
-        // Handle expenses endpoints
         switch (event.httpMethod) {
           case 'GET':
             if (params.context) {
-              // Get filtered expenses by context (e.g., vehicle plate)
               response = await fetchGas('getFilteredExpenses', {
                 context: params.context,
                 range: params.range
               })
             } else {
-              // Get expenses by branch and category
               if (!params.branch) {
                 return createResponse(400, {
                   success: false,
@@ -119,7 +116,6 @@ exports.handler = async (event) => {
             break
 
           case 'POST':
-            // Submit new expense
             if (!body?.data) {
               return createResponse(400, {
                 success: false,
@@ -134,6 +130,50 @@ exports.handler = async (event) => {
               success: false,
               error: 'Method not allowed'
             }, { origin })
+        }
+        break
+
+      case 'checkin':
+        if (!body?.data) {
+          return createResponse(400, {
+            success: false,
+            error: 'Data check-in diperlukan'
+          }, { origin })
+        }
+
+        // Validate required fields including photo
+        if (!body.data.checkInPhoto) {
+          return createResponse(400, {
+            success: false,
+            error: 'Foto odometer diperlukan'
+          }, { origin })
+        }
+
+        response = await fetchGas('submitCheckIn', body.data)
+        if (response.success && body?.data?.branch) {
+          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
+        }
+        break
+
+      case 'checkout':
+        if (!body?.data) {
+          return createResponse(400, {
+            success: false,
+            error: 'Data check-out diperlukan'
+          }, { origin })
+        }
+
+        // Validate required fields including photo
+        if (!body.data.checkOutPhoto) {
+          return createResponse(400, {
+            success: false,
+            error: 'Foto odometer diperlukan'
+          }, { origin })
+        }
+
+        response = await fetchGas('submitCheckOut', body.data)
+        if (response.success && body?.data?.branch) {
+          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
         }
         break
 
@@ -192,20 +232,6 @@ exports.handler = async (event) => {
 
       case 'activate':
         response = await fetchGas('activateAccount', { token: params.token })
-        break
-
-      case 'checkin':
-        response = await fetchGas('submitCheckIn', body?.data)
-        if (response.success && body?.data?.branch) {
-          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
-        }
-        break
-
-      case 'checkout':
-        response = await fetchGas('submitCheckOut', body?.data)
-        if (response.success && body?.data?.branch) {
-          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
-        }
         break
 
       case 'delivery':
