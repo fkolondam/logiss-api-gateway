@@ -1,4 +1,5 @@
 const fetch = require('node-fetch')
+const cache = require('./cache')
 
 const GAS_URL = process.env.GAS_URL
 const GAS_API_KEY = process.env.GAS_API_KEY
@@ -12,6 +13,32 @@ const POST_ACTIONS = [
   'submitDelivery',
   'submitExpenses'
 ]
+
+// List of actions that use caching
+const CACHED_ACTIONS = [
+  'getAvailableInvoices',
+  'getBranchConfig',
+  'getVehicleData',
+  'getDeliveries',
+  'getDeliveriesContext',
+  'getDelivery',
+  'getExpenses',
+  'getFilteredExpenses',
+  'activate'
+]
+
+// Cache duration in seconds
+const CACHE_DURATION = {
+  getAvailableInvoices: 60, // 1 minute
+  getBranchConfig: 3600, // 1 hour
+  getVehicleData: 3600, // 1 hour
+  getDeliveries: 300, // 5 minutes
+  getDeliveriesContext: 300, // 5 minutes
+  getDelivery: 300, // 5 minutes
+  getExpenses: 300, // 5 minutes
+  getFilteredExpenses: 300, // 5 minutes
+  activate: 3600 // 1 hour since activation tokens don't change frequently
+}
 
 // File upload configurations
 const FILE_TYPES = {
@@ -33,6 +60,16 @@ async function fetchGas(action, data = null) {
     if (!GAS_API_KEY) {
       console.error('GAS_API_KEY is not configured')
       throw new Error('GAS_API_KEY is not configured')
+    }
+
+    // Check cache for GET requests
+    if (!POST_ACTIONS.includes(action) && CACHED_ACTIONS.includes(action)) {
+      const cacheKey = `${action}_${JSON.stringify(data)}`
+      const cachedResponse = await cache.get(cacheKey)
+      if (cachedResponse) {
+        console.log(`Cache hit for ${action}`)
+        return cachedResponse
+      }
     }
 
     const url = new URL(GAS_URL)
@@ -90,34 +127,49 @@ async function fetchGas(action, data = null) {
       
       // Add data as URL parameters for GET requests
       if (data) {
-        Object.entries(data).forEach(([key, value]) => {
-          if (value) {
-            if (key === 'range' && Array.isArray(value)) {
-              url.searchParams.append(key, value.join(','))
-            } else {
-              url.searchParams.append(key, value)
+        // For getVehicleData, data is the branch string directly
+        if (action === 'getVehicleData') {
+          url.searchParams.append('branch', data)
+        } else {
+          Object.entries(data).forEach(([key, value]) => {
+            if (value) {
+              if (key === 'range' && Array.isArray(value)) {
+                url.searchParams.append(key, value.join(','))
+              } else {
+                url.searchParams.append(key, value)
+              }
             }
-          }
-        })
+          })
+        }
       }
     }
     
     // Debug logs
-    console.log('GAS Request Details:', {
-      method: options.method,
-      url: url.toString().replace(GAS_API_KEY, '***'),
-      action,
-      bodyPreview: options.body ? 'Request body present' : 'No body'
-    })
+    console.log('=== GAS Request Details ===')
+    console.log('Action:', action)
+    console.log('Method:', options.method)
+    console.log('URL:', url.toString().replace(GAS_API_KEY, '[REDACTED]'))
+    if (options.body) {
+      const parsedBody = JSON.parse(options.body)
+      console.log('Request Body:', {
+        ...parsedBody,
+        data: parsedBody.data ? {
+          ...parsedBody.data,
+          hashedPassword: parsedBody.data.hashedPassword ? '[REDACTED]' : undefined
+        } : undefined
+      })
+    }
 
     const response = await fetch(url.toString(), options)
     const responseText = await response.text()
     
-    // Debug logs for raw response
-    console.log('GAS Raw Response:', {
-      status: response.status,
-      text: responseText.substring(0, 1000)
-    })
+    // Debug logs for response
+    console.log('=== GAS Response Details ===')
+    console.log('Status:', response.status)
+    console.log('Raw Response:', responseText.length > 1000 ? 
+      `${responseText.substring(0, 1000)}... [truncated]` : 
+      responseText
+    )
 
     // Handle HTML error responses
     if (responseText.includes('<!DOCTYPE html>')) {
@@ -140,12 +192,13 @@ async function fetchGas(action, data = null) {
     }
     
     // Debug logs for parsed response
-    console.log('GAS Parsed Response:', {
-      status: response.status,
-      success: responseData.success,
-      hasData: !!responseData.data,
-      hasMessage: !!responseData.message
-    })
+    console.log('=== GAS Parsed Response ===')
+    console.log('Success:', responseData.success)
+    console.log('Has Data:', !!responseData.data)
+    console.log('Has Message:', !!responseData.message)
+    if (!responseData.success) {
+      console.log('Error:', responseData.message || 'No error message')
+    }
 
     // Handle error responses
     if (responseData.success === false) {
@@ -155,6 +208,29 @@ async function fetchGas(action, data = null) {
         error: responseData.message || 'GAS request failed',
         data: responseData.data // Include any additional error data
       }
+    }
+
+    // For login responses, just pass through the data as-is
+    if (action === 'login' && responseData.success) {
+      console.log('=== Login Response Analysis ===')
+      console.log('Raw response structure:', JSON.stringify(responseData, null, 2))
+
+      // The GAS script's handleLogin doesn't return a token, 
+      // so we'll just pass through the data as-is
+      return {
+        success: true,
+        data: responseData.data
+      }
+    }
+
+    // Cache successful GET responses
+    if (!POST_ACTIONS.includes(action) && CACHED_ACTIONS.includes(action)) {
+      const cacheKey = `${action}_${JSON.stringify(data)}`
+      const duration = CACHE_DURATION[action] || 3600 // Default 1 hour
+      await cache.set(cacheKey, {
+        success: true,
+        data: responseData.data || responseData
+      }, duration)
     }
     
     // Special handling for expenses responses
@@ -190,6 +266,20 @@ async function fetchGas(action, data = null) {
         }
         if (typeof delivery.invoiceAmount === 'string') {
           delivery.invoiceAmount = parseFloat(delivery.invoiceAmount)
+        }
+      })
+    }
+
+    // Special handling for available invoices
+    if (action === 'getAvailableInvoices') {
+      const invoices = responseData.data?.invoices || []
+      invoices.forEach(invoice => {
+        if (typeof invoice.amount === 'string') {
+          invoice.amount = parseFloat(invoice.amount)
+        }
+        if (invoice.date) {
+          const dateObj = new Date(invoice.date)
+          invoice.date = `${dateObj.getMonth() + 1}/${dateObj.getDate()}/${dateObj.getFullYear()}`
         }
       })
     }

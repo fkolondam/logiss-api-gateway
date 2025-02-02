@@ -1,9 +1,9 @@
 const { fetchGas } = require('./utils/gas')
-const { verifyToken, getTokenFromRequest } = require('./utils/auth')
+const { verifyToken, getTokenFromRequest, generateToken } = require('./utils/auth')
 const { createResponse } = require('./utils/response')
 
 // Routes yang memerlukan authentication
-const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses']
+const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices']
 
 // Validasi file upload
 function validateFileUpload(data, fieldName) {
@@ -35,37 +35,134 @@ exports.handler = async (event) => {
     const body = event.body ? JSON.parse(event.body) : null
     const origin = event.headers.origin
 
-    console.log('Request path:', path)
-    console.log('Request params:', params)
-    console.log('Request body:', body)
+    // Debug logging for request
+    console.log('=== Request Details ===')
+    console.log('Path:', path)
+    console.log('HTTP Method:', event.httpMethod)
+    console.log('Headers:', {
+      ...event.headers,
+      authorization: event.headers.authorization ? '[REDACTED]' : undefined
+    })
+    console.log('Query Parameters:', params)
+    console.log('Request Body:', body ? {
+      ...body,
+      data: body.data ? {
+        ...body.data,
+        hashedPassword: body.data.hashedPassword ? '[REDACTED]' : undefined
+      } : undefined
+    } : null)
 
     // Validate authentication for protected routes
     if (PROTECTED_ROUTES.includes(path)) {
+      console.log('=== Auth Check for Protected Route ===')
+      console.log('Protected Route:', path)
+      
       const token = getTokenFromRequest(event)
       if (!token) {
+        console.log('Auth Error: No token provided')
         return createResponse(401, {
           success: false,
           error: 'Authentication required'
         }, { origin })
       }
+      console.log('Token found in request')
 
       const decoded = verifyToken(token)
       if (!decoded) {
+        console.log('Auth Error: Invalid or expired token')
         return createResponse(401, {
           success: false,
           error: 'Invalid or expired token'
         }, { origin })
       }
+      console.log('Token verified successfully:', {
+        email: decoded.email,
+        role: decoded.role,
+        branch: decoded.branch,
+        expiresIn: new Date(decoded.exp * 1000).toISOString()
+      })
 
       // Add username from token to request data
       if (body?.data) {
         body.data.username = decoded.email
+        console.log('Added username to request:', decoded.email)
       }
     }
 
     let response
 
     switch (path) {
+      case 'activate':
+        if (!params.token) {
+          return createResponse(400, {
+            success: false,
+            error: 'Token aktivasi diperlukan'
+          }, { origin })
+        }
+        response = await fetchGas('activate', { token: params.token })
+        break
+
+      case 'login':
+        if (!body?.data?.email || !body?.data?.hashedPassword) {
+          return createResponse(400, {
+            success: false,
+            error: 'Email dan password diperlukan'
+          }, { origin })
+        }
+        response = await fetchGas('login', body.data)
+        
+        // If login successful, generate JWT token
+        if (response.success && response.data) {
+          const token = generateToken({
+            email: response.data.email,
+            fullName: response.data.fullName,
+            role: response.data.role,
+            branch: response.data.branch
+          })
+          
+          // Add token to response data
+          response.data.token = token
+        }
+        break
+
+      case 'register':
+        if (!body?.data?.email || !body?.data?.hashedPassword || !body?.data?.fullName) {
+          return createResponse(400, {
+            success: false,
+            error: 'Email, password, dan nama lengkap diperlukan'
+          }, { origin })
+        }
+        response = await fetchGas('register', body.data)
+        break
+
+      case 'available-invoices':
+        if (!params.branch || !params.date) {
+          return createResponse(400, {
+            success: false,
+            error: 'Branch dan date parameter diperlukan'
+          }, { origin })
+        }
+
+        const dateObj = new Date(params.date)
+        if (isNaN(dateObj.getTime())) {
+          return createResponse(400, {
+            success: false,
+            error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
+          }, { origin })
+        }
+
+        const month = dateObj.getMonth() + 1
+        const day = dateObj.getDate()
+        const year = dateObj.getFullYear()
+        const formattedDate = `${month}/${day}/${year}`
+
+        response = await fetchGas('getAvailableInvoices', {
+          branch: params.branch,
+          date: formattedDate,
+          range: params.range
+        })
+        break
+
       case 'delivery':
         switch (event.httpMethod) {
           case 'GET':
@@ -411,24 +508,24 @@ exports.handler = async (event) => {
           }, { origin })
         }
 
-        const dateObj = new Date(params.date)
-        if (isNaN(dateObj.getTime())) {
+        const invoiceDateObj = new Date(params.date)
+        if (isNaN(invoiceDateObj.getTime())) {
           return createResponse(400, {
             success: false,
             error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
           }, { origin })
         }
 
-        const month = dateObj.getMonth() + 1
-        const day = dateObj.getDate()
-        const year = dateObj.getFullYear()
-        const formattedDate = `${month}/${day}/${year}`
+        const invoiceMonth = invoiceDateObj.getMonth() + 1
+        const invoiceDay = invoiceDateObj.getDate()
+        const invoiceYear = invoiceDateObj.getFullYear()
+        const invoiceFormattedDate = `${invoiceMonth}/${invoiceDay}/${invoiceYear}`
 
         response = await fetchGas(
           params.ranged === 'true' ? 'getRangedInvoiceList' : 'getInvoiceList',
           {
             branch: params.branch,
-            date: formattedDate
+            date: invoiceFormattedDate
           }
         )
         break
@@ -440,19 +537,33 @@ exports.handler = async (event) => {
         }, { origin })
     }
 
-    if (!response.success) {
+    // Debug logging for response
+    console.log('=== Response Details ===')
+    if (!response?.success) {
       // Determine status code based on error message
-      const statusCode = response.error?.includes('tidak ditemukan') ? 404 :
-                        response.error?.includes('tidak lengkap') || 
-                        response.error?.includes('sedang dalam perjalanan') ||
-                        response.error?.includes('sudah selesai') ||
-                        response.error?.includes('harus lebih besar') ||
-                        response.error?.includes('terlalu jauh') ? 400 :
+      const statusCode = response?.error?.includes('tidak ditemukan') ? 404 :
+                        response?.error?.includes('tidak lengkap') || 
+                        response?.error?.includes('sedang dalam perjalanan') ||
+                        response?.error?.includes('sudah selesai') ||
+                        response?.error?.includes('harus lebih besar') ||
+                        response?.error?.includes('terlalu jauh') ? 400 :
                         500
-
+      
+      console.log('Error Response:', {
+        statusCode,
+        success: false,
+        error: response?.error || 'Unknown error',
+        data: response?.data
+      })
       return createResponse(statusCode, response, { origin })
     }
 
+    console.log('Success Response:', {
+      statusCode: 200,
+      success: true,
+      hasData: !!response?.data,
+      dataType: response?.data ? typeof response.data : null
+    })
     return createResponse(200, response, { origin })
   } catch (error) {
     console.error('API Error:', error)
