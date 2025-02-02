@@ -1,7 +1,6 @@
 const { fetchGas } = require('./utils/gas')
-const { verifyToken, getTokenFromRequest, generateToken } = require('./utils/auth')
+const { verifyToken, getTokenFromRequest } = require('./utils/auth')
 const { createResponse } = require('./utils/response')
-const cacheService = require('./utils/cache')
 
 // Routes yang memerlukan authentication
 const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses']
@@ -21,6 +20,7 @@ exports.handler = async (event) => {
     console.log('Request params:', params)
     console.log('Request body:', body)
 
+    // Validate authentication for protected routes
     if (PROTECTED_ROUTES.includes(path)) {
       const token = getTokenFromRequest(event)
       if (!token) {
@@ -38,60 +38,15 @@ exports.handler = async (event) => {
         }, { origin })
       }
 
-      if (body && decoded) {
-        body.data = {
-          ...body.data,
-          username: decoded.email
-        }
+      // Add username from token to request data
+      if (body?.data) {
+        body.data.username = decoded.email
       }
     }
 
     let response
 
     switch (path) {
-      case 'branches':
-        response = await cacheService.getOrFetchBranches(fetchGas)
-        break
-
-      case 'vehicles':
-        if (!params.branch) {
-          return createResponse(400, {
-            success: false,
-            error: 'Branch parameter required'
-          }, { origin })
-        }
-        response = await cacheService.getOrFetchVehicles(fetchGas, params.branch)
-        break
-
-      case 'invoices':
-        if (!params.branch || !params.date) {
-          return createResponse(400, {
-            success: false,
-            error: 'Branch dan date parameter diperlukan'
-          }, { origin })
-        }
-
-        const dateObj = new Date(params.date)
-        if (isNaN(dateObj.getTime())) {
-          return createResponse(400, {
-            success: false,
-            error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
-          }, { origin })
-        }
-
-        const month = dateObj.getMonth() + 1
-        const day = dateObj.getDate()
-        const year = dateObj.getFullYear()
-        const formattedDate = `${month}/${day}/${year}`
-
-        response = await cacheService.getOrFetchInvoices(
-          fetchGas,
-          params.branch,
-          formattedDate,
-          params.ranged === 'true'
-        )
-        break
-
       case 'expenses':
         switch (event.httpMethod) {
           case 'GET':
@@ -122,6 +77,25 @@ exports.handler = async (event) => {
                 error: 'Data expenses diperlukan'
               }, { origin })
             }
+
+            // Validate required fields
+            const requiredFields = ['date', 'branch', 'licensePlate', 'category', 'subcategory', 'amount']
+            const missingFields = requiredFields.filter(field => !body.data[field])
+            if (missingFields.length > 0) {
+              return createResponse(400, {
+                success: false,
+                error: `Data tidak lengkap. Field yang diperlukan: ${missingFields.join(', ')}`
+              }, { origin })
+            }
+
+            // Validate amount
+            if (typeof body.data.amount !== 'number' || body.data.amount <= 0) {
+              return createResponse(400, {
+                success: false,
+                error: 'Amount harus berupa angka positif'
+              }, { origin })
+            }
+
             response = await fetchGas('submitExpenses', body.data)
             break
 
@@ -142,17 +116,16 @@ exports.handler = async (event) => {
         }
 
         // Validate required fields including photo
-        if (!body.data.checkInPhoto) {
+        const checkinRequired = ['branch', 'vehicleNumber', 'checkInTime', 'initialOdometer', 'checkInPhoto', 'location']
+        const missingCheckin = checkinRequired.filter(field => !body.data[field])
+        if (missingCheckin.length > 0) {
           return createResponse(400, {
             success: false,
-            error: 'Foto odometer diperlukan'
+            error: `Data tidak lengkap. Field yang diperlukan: ${missingCheckin.join(', ')}`
           }, { origin })
         }
 
         response = await fetchGas('submitCheckIn', body.data)
-        if (response.success && body?.data?.branch) {
-          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
-        }
         break
 
       case 'checkout':
@@ -164,82 +137,63 @@ exports.handler = async (event) => {
         }
 
         // Validate required fields including photo
-        if (!body.data.checkOutPhoto) {
+        const checkoutRequired = ['sessionId', 'checkOutTime', 'finalOdometer', 'checkOutPhoto', 'location']
+        const missingCheckout = checkoutRequired.filter(field => !body.data[field])
+        if (missingCheckout.length > 0) {
           return createResponse(400, {
             success: false,
-            error: 'Foto odometer diperlukan'
+            error: `Data tidak lengkap. Field yang diperlukan: ${missingCheckout.join(', ')}`
           }, { origin })
         }
 
         response = await fetchGas('submitCheckOut', body.data)
-        if (response.success && body?.data?.branch) {
-          cacheService.invalidateByPattern(`invoice_${body.data.branch}`)
-        }
         break
 
-      case 'cache':
-        if (!params.action) {
+      case 'branches':
+        response = await fetchGas('getBranchConfig')
+        break
+
+      case 'vehicles':
+        if (!params.branch) {
           return createResponse(400, {
             success: false,
-            error: 'Cache action required'
+            error: 'Branch parameter required'
+          }, { origin })
+        }
+        response = await fetchGas('getVehicleData', params.branch)
+        break
+
+      case 'invoices':
+        if (!params.branch || !params.date) {
+          return createResponse(400, {
+            success: false,
+            error: 'Branch dan date parameter diperlukan'
           }, { origin })
         }
 
-        switch (params.action) {
-          case 'stats':
-            return createResponse(200, {
-              success: true,
-              data: cacheService.getStats()
-            }, { origin })
-
-          case 'clear':
-            if (!params.pattern) {
-              return createResponse(400, {
-                success: false,
-                error: 'Pattern required for cache clear'
-              }, { origin })
-            }
-            const cleared = cacheService.invalidateByPattern(params.pattern)
-            return createResponse(200, {
-              success: true,
-              message: `Cleared ${cleared} cache entries matching pattern: ${params.pattern}`
-            }, { origin })
-
-          default:
-            return createResponse(400, {
-              success: false,
-              error: 'Invalid cache action'
-            }, { origin })
+        const dateObj = new Date(params.date)
+        if (isNaN(dateObj.getTime())) {
+          return createResponse(400, {
+            success: false,
+            error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
+          }, { origin })
         }
 
-      case 'login':
-        response = await fetchGas('login', body?.data)
-        if (response.success) {
-          const userData = response.data
-          const token = generateToken({
-            email: userData.email,
-            fullName: userData.fullName,
-            role: userData.role,
-            branch: userData.branch
-          })
-          response.data.token = token
-        }
-        break
+        const month = dateObj.getMonth() + 1
+        const day = dateObj.getDate()
+        const year = dateObj.getFullYear()
+        const formattedDate = `${month}/${day}/${year}`
 
-      case 'register':
-        response = await fetchGas('register', body?.data)
-        break
-
-      case 'activate':
-        response = await fetchGas('activateAccount', { token: params.token })
-        break
-
-      case 'delivery':
-        response = await fetchGas('submitForm', body?.data)
+        response = await fetchGas(
+          params.ranged === 'true' ? 'getRangedInvoiceList' : 'getInvoiceList',
+          {
+            branch: params.branch,
+            date: formattedDate
+          }
+        )
         break
 
       default:
-        console.log('Path not found:', path)
         return createResponse(404, {
           success: false,
           error: 'Not found'

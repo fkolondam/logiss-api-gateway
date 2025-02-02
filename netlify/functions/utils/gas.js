@@ -3,6 +3,16 @@ const fetch = require('node-fetch')
 const GAS_URL = process.env.GAS_URL
 const GAS_API_KEY = process.env.GAS_API_KEY
 
+// List of actions that use POST method
+const POST_ACTIONS = [
+  'login', 
+  'register',
+  'submitCheckIn',
+  'submitCheckOut',
+  'submitForm',
+  'submitExpenses'
+]
+
 async function fetchGas(action, data = null) {
   try {
     if (!GAS_URL) {
@@ -16,17 +26,9 @@ async function fetchGas(action, data = null) {
     }
 
     const url = new URL(GAS_URL)
-    
-    // Determine method based on action type
-    const isPostAction = [
-      'login', 
-      'register', 
-      'submitCheckIn', 
-      'submitCheckOut', 
-      'submitForm',
-      'submitExpenses'
-    ].includes(action)
+    const isPostAction = POST_ACTIONS.includes(action)
 
+    // Setup request options
     const options = {
       method: isPostAction ? 'POST' : 'GET',
       headers: {
@@ -34,43 +36,56 @@ async function fetchGas(action, data = null) {
       }
     }
 
-    // Add action and API key to URL params
-    url.searchParams.append('action', action)
+    // Add API key to all requests
     url.searchParams.append('key', GAS_API_KEY)
 
-    // Handle data based on method
-    if (data) {
-      if (isPostAction) {
-        // Handle base64 data for file uploads
-        let processedData = { ...data }
-        
-        // Handle check-in photo
-        if (action === 'submitCheckIn' && data.checkInPhoto) {
-          const base64Data = data.checkInPhoto.split(',')[1] || data.checkInPhoto
-          processedData.checkInPhoto = base64Data
-        }
-        
-        // Handle check-out photo
-        if (action === 'submitCheckOut' && data.checkOutPhoto) {
-          const base64Data = data.checkOutPhoto.split(',')[1] || data.checkOutPhoto
-          processedData.checkOutPhoto = base64Data
-        }
-        
-        // Handle expense receipt
-        if (action === 'submitExpenses' && data.receiptPhoto) {
-          const base64Data = data.receiptPhoto.split(',')[1] || data.receiptPhoto
-          processedData.receiptPhoto = base64Data
-        }
-        
-        options.body = JSON.stringify({
-          action,
-          data: processedData
-        })
-      } else {
-        // For GET requests, append data to URL params
+    if (isPostAction) {
+      // Handle POST requests
+      let processedData = { ...data }
+
+      // Process file uploads
+      switch (action) {
+        case 'submitCheckIn':
+          if (data.checkInPhoto) {
+            // Remove data URL prefix if exists
+            const base64Data = data.checkInPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
+            processedData.checkInPhoto = base64Data
+          }
+          break;
+
+        case 'submitCheckOut':
+          if (data.checkOutPhoto) {
+            const base64Data = data.checkOutPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
+            processedData.checkOutPhoto = base64Data
+          }
+          break;
+
+        case 'submitExpenses':
+          if (data.receiptPhoto) {
+            const base64Data = data.receiptPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
+            processedData.receiptPhoto = base64Data
+            console.log('Processing expense receipt:', {
+              hasPhoto: true,
+              dataLength: base64Data.length,
+              sampleStart: base64Data.substring(0, 50)
+            })
+          }
+          break;
+      }
+
+      // Add action to body for POST requests
+      options.body = JSON.stringify({
+        action,
+        data: processedData
+      })
+    } else {
+      // Handle GET requests
+      url.searchParams.append('action', action)
+      
+      // Add data as URL parameters for GET requests
+      if (data) {
         Object.entries(data).forEach(([key, value]) => {
           if (value) {
-            // Handle date range parameter
             if (key === 'range' && Array.isArray(value)) {
               url.searchParams.append(key, value.join(','))
             } else {
@@ -84,9 +99,9 @@ async function fetchGas(action, data = null) {
     // Debug logs
     console.log('GAS Request Details:', {
       method: options.method,
-      url: url.toString().replace(GAS_API_KEY, '***'), // Hide API key in logs
+      url: url.toString().replace(GAS_API_KEY, '***'),
       action,
-      data: isPostAction ? 'Data in body' : data
+      bodyPreview: options.body ? 'Request body present' : 'No body'
     })
 
     const response = await fetch(url.toString(), options)
@@ -95,26 +110,20 @@ async function fetchGas(action, data = null) {
     // Debug logs for raw response
     console.log('GAS Raw Response:', {
       status: response.status,
-      text: responseText.substring(0, 1000) // Limit log size
+      text: responseText.substring(0, 1000)
     })
 
-    // Special handling for activation response which returns plain text
-    if (action === 'activateAccount') {
-      if (responseText.includes('Token aktivasi tidak valid')) {
-        return {
-          success: false,
-          message: 'Token aktivasi tidak valid'
-        }
+    // Handle HTML error responses
+    if (responseText.includes('<!DOCTYPE html>')) {
+      console.error('GAS returned HTML error:', responseText)
+      const errorMatch = responseText.match(/TypeError: (.+?)\(/);
+      if (errorMatch) {
+        throw new Error(errorMatch[1].trim());
       }
-      if (responseText.includes('Akun berhasil diaktivasi')) {
-        return {
-          success: true,
-          message: 'Akun berhasil diaktivasi. Silakan login.'
-        }
-      }
+      throw new Error('Server returned HTML error response');
     }
 
-    // For other actions, parse JSON response
+    // Parse JSON response
     let responseData
     try {
       responseData = JSON.parse(responseText)
@@ -132,22 +141,11 @@ async function fetchGas(action, data = null) {
       hasMessage: !!responseData.message
     })
 
-    // Handle both success and error responses from GAS
+    // Handle error responses
     if (responseData.success === false) {
       throw new Error(responseData.message || 'GAS request failed')
     }
     
-    // Special handling for responses with photo URLs
-    if (['submitCheckIn', 'submitCheckOut'].includes(action)) {
-      // Ensure photo URLs are properly formatted
-      if (responseData.data?.checkInPhotoUrl) {
-        responseData.data.checkInPhotoUrl = responseData.data.checkInPhotoUrl.replace(/\\/g, '')
-      }
-      if (responseData.data?.checkOutPhotoUrl) {
-        responseData.data.checkOutPhotoUrl = responseData.data.checkOutPhotoUrl.replace(/\\/g, '')
-      }
-    }
-
     // Special handling for expenses responses
     if (action.startsWith('get') && action.includes('Expenses')) {
       const expenses = responseData.data?.expenses || []
