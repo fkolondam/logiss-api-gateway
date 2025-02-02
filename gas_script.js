@@ -95,6 +95,18 @@ function formatDate(date) {
   return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
 }
 
+// Helper function to format date string as M/D/YYYY HH:mm:ss without timezone conversion
+function formatDateWithTime(dateString) {
+  // Parse the date parts from the ISO string
+  const [datePart, timePart] = dateString.split('T');
+  const [year, month, day] = datePart.split('-');
+  const [hours, minutes, secondsWithZ] = timePart.split(':');
+  const seconds = secondsWithZ.replace('Z', '');
+  
+  // Format as M/D/YYYY HH:mm:ss
+  return `${parseInt(month)}/${parseInt(day)}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
 // Web app endpoints
 function doGet(e) {
   // Validate API Key from URL parameter
@@ -164,7 +176,7 @@ function doPost(e) {
     case 'submitExpenses':
       return submitExpenses(data.data)
     case 'submitDelivery':
-      return submitExpenses(data.data)
+      return submitDelivery(data.data)
     default:
       return sendError('Invalid action')
   }
@@ -1083,9 +1095,10 @@ function getRangedInvoiceList(branch, date) {
     sheet.getRange(userRow, 4).setValue(true) // Active status
     sheet.getRange(userRow, 6).setValue('') // Clear activation token
     
-    return ContentService
-      .createTextOutput('Akun berhasil diaktivasi. Silakan login.')
-      .setMimeType(ContentService.MimeType.TEXT)
+  return sendResponse({
+    success: true,
+    message: 'Akun berhasil diaktivasi. Silakan login.'
+  })
   }
   
   // Email Functions
@@ -1239,6 +1252,14 @@ function submitExpenses(data) {
   }
 }
 
+// Constants
+const PAYMENT_TYPES = {
+  TUNAI: 'TUNAI',
+  TRANSFER: 'TRANSFER',
+  CEK_GIRO: 'CEK/GIRO',
+  TTF: 'TANDA TERIMA FAKTUR'
+};
+
 // Column indices for better readability and maintenance
 const DeliveryCol = {
   TIMESTAMP: 0,
@@ -1259,7 +1280,96 @@ const DeliveryCol = {
   LOCATION: 15,
   ID: 16,
   DELIVERY_PHOTO: 17,
-  PAYMENT_PHOTO: 18
+  PAYMENT_PHOTO: 18,
+  INPUTER: 19
+}
+
+// Helper function to get the last delivery ID for a branch on a specific date with caching
+const sequenceCache = {};
+function getLastDeliveryId(branch, date) {
+  try {
+    const formattedDate = Utilities.formatDate(date, TIMEZONE, "yyMMdd")
+    const cacheKey = `${branch}_${formattedDate}`
+    
+    // Check cache first
+    if (sequenceCache[cacheKey]) {
+      sequenceCache[cacheKey]++; // Increment sequence
+      return sequenceCache[cacheKey];
+    }
+
+    const sheet = SpreadsheetApp.openById(DELIVERY_SHEET_ID).getSheetByName('Form Responses 1')
+    const lastRow = sheet.getLastRow()
+    
+    // Only get the last 100 rows or all rows if less than 100
+    const numRows = Math.min(100, lastRow - 1)
+    const startRow = Math.max(2, lastRow - numRows + 1)
+    const data = sheet.getRange(startRow, 1, numRows, sheet.getLastColumn()).getValues()
+    
+    // Filter and find max sequence for today's deliveries
+    const todayDeliveries = data.filter(row => {
+      const deliveryDate = new Date(row[DeliveryCol.TIMESTAMP])
+      const deliveryFormattedDate = Utilities.formatDate(deliveryDate, TIMEZONE, "yyMMdd")
+      return row[DeliveryCol.BRANCH] === branch && deliveryFormattedDate === formattedDate
+    })
+    
+    let maxSequence = 0
+    if (todayDeliveries.length > 0) {
+      const sequences = todayDeliveries.map(row => {
+        const id = row[DeliveryCol.ID]
+        const parts = id.split('.')
+        return parseInt(parts[parts.length - 1], 10)
+      })
+      maxSequence = Math.max(...sequences)
+    }
+    
+    // Cache the result
+    sequenceCache[cacheKey] = maxSequence + 1
+    
+    return maxSequence
+  } catch (error) {
+    console.error('Error getting last delivery ID:', error)
+    return 0
+  }
+}
+
+// Helper function to generate delivery ID
+function generateDeliveryId(branch, date) {
+  const formattedDate = Utilities.formatDate(date, TIMEZONE, "yyMMdd")
+  const lastSequence = getLastDeliveryId(branch, date)
+  const newSequence = (lastSequence + 1).toString().padStart(3, '0')
+  return `${branch}.${formattedDate}.${newSequence}`
+}
+
+// Helper function to generate Google Maps URL
+function generateMapsUrl(latitude, longitude) {
+  return `https://www.google.com/maps?q=${latitude},${longitude}`
+}
+
+// Helper function to get driver's full name from session with caching
+const userCache = {};
+function getDriverFullName(username) {
+  try {
+    // Check cache first
+    if (userCache[username]) {
+      return userCache[username];
+    }
+
+    // Get user data directly from Users sheet
+    const userSheet = SpreadsheetApp.openById(USER_SHEET_ID).getSheetByName('Users')
+    const users = userSheet.getDataRange().getValues()
+    const userHeaders = users.shift()
+    
+    const user = users.find(row => row[0] === username)
+    const fullName = user ? user[2] : username;
+    
+    // Cache the result
+    userCache[username] = fullName;
+    
+    return fullName;
+  } catch (error) {
+    console.error('Error getting driver full name:', error)
+    return username
+  }
 }
 
 // Helper function to map delivery data
@@ -1299,15 +1409,23 @@ function submitDelivery(data) {
       return sendError('Data tidak lengkap')
     }
 
-    // Generate ID
-    const deliveryId = Utilities.getUuid()
-
-    // Upload all photos
-    const uploadResults = {
-      checkin: uploadFile(data.deliveryCheckinPhoto, 'deliveryCheckinPhoto', `delivery_checkin_${deliveryId}`),
-      delivery: data.deliveryPhoto ? uploadFile(data.deliveryPhoto, 'deliveryPhoto', `delivery_photo_${deliveryId}`) : null,
-      payment: data.paymentPhoto ? uploadFile(data.paymentPhoto, 'paymentPhoto', `payment_photo_${deliveryId}`) : null
+    // Validate payment type
+    if (!Object.values(PAYMENT_TYPES).includes(data.paymentType)) {
+      return sendError('Metode pembayaran tidak valid. Pilihan yang tersedia: ' + Object.values(PAYMENT_TYPES).join(', '))
     }
+
+    // Generate delivery ID with current date in Jakarta timezone
+    const deliveryDate = new Date()
+    const jakartaDate = new Date(deliveryDate.getTime() + (7 * 60 * 60 * 1000)) // UTC+7 for Jakarta
+    const deliveryId = generateDeliveryId(data.branch, jakartaDate)
+
+      // Upload all photos in parallel
+      const uploadPromises = [
+        uploadFile(data.deliveryCheckinPhoto, 'deliveryCheckinPhoto', `delivery_checkin_${deliveryId}`),
+        data.deliveryPhoto ? uploadFile(data.deliveryPhoto, 'deliveryPhoto', `delivery_photo_${deliveryId}`) : Promise.resolve(null),
+        data.paymentPhoto ? uploadFile(data.paymentPhoto, 'paymentPhoto', `payment_photo_${deliveryId}`) : Promise.resolve(null)
+      ];
+      const uploadResults = await Promise.all(uploadPromises);
 
     // Validate uploads
     if (!uploadResults.checkin.success) {
@@ -1327,12 +1445,12 @@ function submitDelivery(data) {
       // Add delivery data
       const sheet = SpreadsheetApp.openById(DELIVERY_SHEET_ID).getSheetByName('Form Responses 1')
       sheet.appendRow([
-        toUTCString(new Date()), // Timestamp
+        Utilities.formatDate(deliveryDate, TIMEZONE, "yyyy-MM-dd HH:mm:ss"), // Current timestamp with timezone
         data.branch,
-        data.username,
+        getDriverFullName(data.username), // Get driver's full name
         data.helperName,
         data.vehicleNumber,
-        toUTCString(new Date(data.deliveryTime)),
+        formatDateWithTime(data.deliveryTime), // Format as M/D/YYYY HH:mm:ss without timezone conversion
         data.storeName,
         data.storeAddress,
         data.invoiceNumber,
@@ -1342,10 +1460,11 @@ function submitDelivery(data) {
         uploadResults.checkin.url,
         data.location.latitude,
         data.location.longitude,
-        JSON.stringify(data.location),
+        generateMapsUrl(data.location.latitude, data.location.longitude),
         deliveryId,
         uploadResults.delivery?.url || '',
-        uploadResults.payment?.url || ''
+        uploadResults.payment?.url || '',
+        data.username // Inputer
       ])
 
       return sendResponse({

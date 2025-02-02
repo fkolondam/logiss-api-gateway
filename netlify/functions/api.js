@@ -241,7 +241,7 @@ exports.handler = async (event) => {
               }
 
               // Validate payment type
-              const validPaymentTypes = ['CASH', 'TRANSFER', 'GIRO']
+              const validPaymentTypes = ['TUNAI', 'TRANSFER', 'CEK/GIRO', 'TANDA TERIMA FAKTUR']
               if (!validPaymentTypes.includes(body.data.paymentType)) {
                 throw new Error('Tipe pembayaran tidak valid')
               }

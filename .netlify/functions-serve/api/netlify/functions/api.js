@@ -8310,7 +8310,7 @@ exports.handler = async (event) => {
               if (typeof body.data.invoiceAmount !== "number" || body.data.invoiceAmount <= 0) {
                 throw new Error("Nilai faktur harus berupa angka positif");
               }
-              const validPaymentTypes = ["CASH", "TRANSFER", "GIRO"];
+              const validPaymentTypes = ["TUNAI", "TRANSFER", "CEK/GIRO", "TANDA TERIMA FAKTUR"];
               if (!validPaymentTypes.includes(body.data.paymentType)) {
                 throw new Error("Tipe pembayaran tidak valid");
               }
