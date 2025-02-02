@@ -3039,6 +3039,11 @@ var require_gas = __commonJS({
       "submitForm",
       "submitExpenses"
     ];
+    var FILE_TYPES = {
+      checkInPhoto: "odometerCheckin",
+      checkOutPhoto: "odometerCheckout",
+      receiptPhoto: "receiptPhoto"
+    };
     async function fetchGas2(action, data = null) {
       try {
         if (!GAS_URL) {
@@ -3060,30 +3065,22 @@ var require_gas = __commonJS({
         url.searchParams.append("key", GAS_API_KEY);
         if (isPostAction) {
           let processedData = { ...data };
-          switch (action) {
-            case "submitCheckIn":
-              if (data.checkInPhoto) {
-                const base64Data = data.checkInPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
-                processedData.checkInPhoto = base64Data;
-              }
-              break;
-            case "submitCheckOut":
-              if (data.checkOutPhoto) {
-                const base64Data = data.checkOutPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
-                processedData.checkOutPhoto = base64Data;
-              }
-              break;
-            case "submitExpenses":
-              if (data.receiptPhoto) {
-                const base64Data = data.receiptPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
-                processedData.receiptPhoto = base64Data;
-                console.log("Processing expense receipt:", {
-                  hasPhoto: true,
-                  dataLength: base64Data.length,
-                  sampleStart: base64Data.substring(0, 50)
-                });
-              }
-              break;
+          Object.entries(FILE_TYPES).forEach(([field, fileType]) => {
+            if (data[field]) {
+              const base64Data = data[field].replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
+              processedData[field] = base64Data;
+              console.log(`Processing ${fileType}:`, {
+                hasPhoto: true,
+                dataLength: base64Data.length,
+                sampleStart: base64Data.substring(0, 50)
+              });
+            }
+          });
+          if (action === "submitCheckIn" && processedData.checkInTime) {
+            processedData.checkInTime = new Date(processedData.checkInTime).toISOString();
+          }
+          if (action === "submitCheckOut" && processedData.checkOutTime) {
+            processedData.checkOutTime = new Date(processedData.checkOutTime).toISOString();
           }
           options.body = JSON.stringify({
             action,
@@ -3138,7 +3135,12 @@ var require_gas = __commonJS({
           hasMessage: !!responseData.message
         });
         if (responseData.success === false) {
-          throw new Error(responseData.message || "GAS request failed");
+          return {
+            success: false,
+            error: responseData.message || "GAS request failed",
+            data: responseData.data
+            // Include any additional error data
+          };
         }
         if (action.startsWith("get") && action.includes("Expenses")) {
           const expenses = responseData.data?.expenses || [];
@@ -7232,6 +7234,19 @@ var { fetchGas } = require_gas();
 var { verifyToken, getTokenFromRequest } = require_auth();
 var { createResponse } = require_response();
 var PROTECTED_ROUTES = ["checkin", "checkout", "delivery", "expenses"];
+function validateFileUpload(data, fieldName) {
+  if (!data[fieldName]) {
+    throw new Error(`${fieldName} diperlukan`);
+  }
+  if (!data[fieldName].startsWith("data:image/")) {
+    throw new Error(`Format ${fieldName} tidak valid. Gunakan base64 image dengan data URL`);
+  }
+  const base64Data = data[fieldName].split(",")[1];
+  if (!base64Data) {
+    throw new Error(`Format ${fieldName} tidak valid. Data base64 tidak ditemukan`);
+  }
+  return base64Data;
+}
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return createResponse(204);
@@ -7294,21 +7309,29 @@ exports.handler = async (event) => {
                 error: "Data expenses diperlukan"
               }, { origin: origin2 });
             }
-            const requiredFields = ["date", "branch", "licensePlate", "category", "subcategory", "amount"];
-            const missingFields = requiredFields.filter((field) => !body.data[field]);
-            if (missingFields.length > 0) {
+            try {
+              const requiredFields = ["date", "branch", "licensePlate", "category", "subcategory", "amount"];
+              const missingFields = requiredFields.filter((field) => !body.data[field]);
+              if (missingFields.length > 0) {
+                throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingFields.join(", ")}`);
+              }
+              if (typeof body.data.amount !== "number" || body.data.amount <= 0) {
+                throw new Error("Amount harus berupa angka positif");
+              }
+              const expenseDate = new Date(body.data.date);
+              if (isNaN(expenseDate.getTime())) {
+                throw new Error("Format tanggal tidak valid. Gunakan format YYYY-MM-DD");
+              }
+              if (body.data.receiptPhoto) {
+                validateFileUpload(body.data, "receiptPhoto");
+              }
+              response = await fetchGas("submitExpenses", body.data);
+            } catch (error) {
               return createResponse(400, {
                 success: false,
-                error: `Data tidak lengkap. Field yang diperlukan: ${missingFields.join(", ")}`
+                error: error.message
               }, { origin: origin2 });
             }
-            if (typeof body.data.amount !== "number" || body.data.amount <= 0) {
-              return createResponse(400, {
-                success: false,
-                error: "Amount harus berupa angka positif"
-              }, { origin: origin2 });
-            }
-            response = await fetchGas("submitExpenses", body.data);
             break;
           default:
             return createResponse(405, {
@@ -7324,15 +7347,46 @@ exports.handler = async (event) => {
             error: "Data check-in diperlukan"
           }, { origin: origin2 });
         }
-        const checkinRequired = ["branch", "vehicleNumber", "checkInTime", "initialOdometer", "checkInPhoto", "location"];
-        const missingCheckin = checkinRequired.filter((field) => !body.data[field]);
-        if (missingCheckin.length > 0) {
+        try {
+          const checkinRequired = ["branch", "vehicleNumber", "checkInTime", "initialOdometer", "checkInPhoto", "location"];
+          const missingCheckin = checkinRequired.filter((field) => !body.data[field]);
+          if (missingCheckin.length > 0) {
+            throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingCheckin.join(", ")}`);
+          }
+          if (typeof body.data.initialOdometer !== "number" || body.data.initialOdometer <= 0) {
+            throw new Error("Nilai odometer harus berupa angka positif");
+          }
+          const checkInTime = new Date(body.data.checkInTime);
+          if (isNaN(checkInTime.getTime())) {
+            throw new Error("Format waktu check-in tidak valid");
+          }
+          validateFileUpload(body.data, "checkInPhoto");
+          if (!body.data.location.latitude || !body.data.location.longitude) {
+            throw new Error("Data lokasi tidak lengkap");
+          }
+          if (typeof body.data.location.latitude !== "number" || typeof body.data.location.longitude !== "number") {
+            throw new Error("Format lokasi tidak valid");
+          }
+          response = await fetchGas("submitCheckIn", body.data);
+          if (!response.success) {
+            if (response.error?.includes("Kendaraan sedang dalam perjalanan")) {
+              return createResponse(400, response, { origin: origin2 });
+            }
+            if (response.error?.includes("Lokasi terlalu jauh")) {
+              return createResponse(400, {
+                success: false,
+                error: response.error,
+                data: response.data
+                // Include distance info
+              }, { origin: origin2 });
+            }
+          }
+        } catch (error) {
           return createResponse(400, {
             success: false,
-            error: `Data tidak lengkap. Field yang diperlukan: ${missingCheckin.join(", ")}`
+            error: error.message
           }, { origin: origin2 });
         }
-        response = await fetchGas("submitCheckIn", body.data);
         break;
       case "checkout":
         if (!body?.data) {
@@ -7341,15 +7395,52 @@ exports.handler = async (event) => {
             error: "Data check-out diperlukan"
           }, { origin: origin2 });
         }
-        const checkoutRequired = ["sessionId", "checkOutTime", "finalOdometer", "checkOutPhoto", "location"];
-        const missingCheckout = checkoutRequired.filter((field) => !body.data[field]);
-        if (missingCheckout.length > 0) {
+        try {
+          const checkoutRequired = ["sessionId", "checkOutTime", "finalOdometer", "checkOutPhoto", "location"];
+          const missingCheckout = checkoutRequired.filter((field) => !body.data[field]);
+          if (missingCheckout.length > 0) {
+            throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingCheckout.join(", ")}`);
+          }
+          if (typeof body.data.finalOdometer !== "number" || body.data.finalOdometer <= 0) {
+            throw new Error("Nilai odometer harus berupa angka positif");
+          }
+          const checkOutTime = new Date(body.data.checkOutTime);
+          if (isNaN(checkOutTime.getTime())) {
+            throw new Error("Format waktu check-out tidak valid");
+          }
+          validateFileUpload(body.data, "checkOutPhoto");
+          if (!body.data.location.latitude || !body.data.location.longitude) {
+            throw new Error("Data lokasi tidak lengkap");
+          }
+          if (typeof body.data.location.latitude !== "number" || typeof body.data.location.longitude !== "number") {
+            throw new Error("Format lokasi tidak valid");
+          }
+          response = await fetchGas("submitCheckOut", body.data);
+          if (!response.success) {
+            if (response.error?.includes("Session tidak ditemukan")) {
+              return createResponse(404, response, { origin: origin2 });
+            }
+            if (response.error?.includes("Session sudah selesai")) {
+              return createResponse(400, response, { origin: origin2 });
+            }
+            if (response.error?.includes("Odometer akhir harus lebih besar")) {
+              return createResponse(400, response, { origin: origin2 });
+            }
+            if (response.error?.includes("Lokasi terlalu jauh")) {
+              return createResponse(400, {
+                success: false,
+                error: response.error,
+                data: response.data
+                // Include distance info
+              }, { origin: origin2 });
+            }
+          }
+        } catch (error) {
           return createResponse(400, {
             success: false,
-            error: `Data tidak lengkap. Field yang diperlukan: ${missingCheckout.join(", ")}`
+            error: error.message
           }, { origin: origin2 });
         }
-        response = await fetchGas("submitCheckOut", body.data);
         break;
       case "branches":
         response = await fetchGas("getBranchConfig");
@@ -7396,7 +7487,7 @@ exports.handler = async (event) => {
         }, { origin: origin2 });
     }
     if (!response.success) {
-      const statusCode = response.error?.includes("tidak ditemukan") ? 404 : response.error?.includes("tidak lengkap") ? 400 : 500;
+      const statusCode = response.error?.includes("tidak ditemukan") ? 404 : response.error?.includes("tidak lengkap") || response.error?.includes("sedang dalam perjalanan") || response.error?.includes("sudah selesai") || response.error?.includes("harus lebih besar") || response.error?.includes("terlalu jauh") ? 400 : 500;
       return createResponse(statusCode, response, { origin: origin2 });
     }
     return createResponse(200, response, { origin: origin2 });

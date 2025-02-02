@@ -13,6 +13,13 @@ const POST_ACTIONS = [
   'submitExpenses'
 ]
 
+// File upload configurations
+const FILE_TYPES = {
+  checkInPhoto: 'odometerCheckin',
+  checkOutPhoto: 'odometerCheckout',
+  receiptPhoto: 'receiptPhoto'
+}
+
 async function fetchGas(action, data = null) {
   try {
     if (!GAS_URL) {
@@ -44,33 +51,26 @@ async function fetchGas(action, data = null) {
       let processedData = { ...data }
 
       // Process file uploads
-      switch (action) {
-        case 'submitCheckIn':
-          if (data.checkInPhoto) {
-            // Remove data URL prefix if exists
-            const base64Data = data.checkInPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
-            processedData.checkInPhoto = base64Data
-          }
-          break;
+      Object.entries(FILE_TYPES).forEach(([field, fileType]) => {
+        if (data[field]) {
+          // Remove data URL prefix if exists
+          const base64Data = data[field].replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
+          processedData[field] = base64Data
 
-        case 'submitCheckOut':
-          if (data.checkOutPhoto) {
-            const base64Data = data.checkOutPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
-            processedData.checkOutPhoto = base64Data
-          }
-          break;
+          console.log(`Processing ${fileType}:`, {
+            hasPhoto: true,
+            dataLength: base64Data.length,
+            sampleStart: base64Data.substring(0, 50)
+          })
+        }
+      })
 
-        case 'submitExpenses':
-          if (data.receiptPhoto) {
-            const base64Data = data.receiptPhoto.replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
-            processedData.receiptPhoto = base64Data
-            console.log('Processing expense receipt:', {
-              hasPhoto: true,
-              dataLength: base64Data.length,
-              sampleStart: base64Data.substring(0, 50)
-            })
-          }
-          break;
+      // Format dates to UTC string
+      if (action === 'submitCheckIn' && processedData.checkInTime) {
+        processedData.checkInTime = new Date(processedData.checkInTime).toISOString()
+      }
+      if (action === 'submitCheckOut' && processedData.checkOutTime) {
+        processedData.checkOutTime = new Date(processedData.checkOutTime).toISOString()
       }
 
       // Add action to body for POST requests
@@ -143,7 +143,12 @@ async function fetchGas(action, data = null) {
 
     // Handle error responses
     if (responseData.success === false) {
-      throw new Error(responseData.message || 'GAS request failed')
+      // Return error with original message and any additional data
+      return {
+        success: false,
+        error: responseData.message || 'GAS request failed',
+        data: responseData.data // Include any additional error data
+      }
     }
     
     // Special handling for expenses responses

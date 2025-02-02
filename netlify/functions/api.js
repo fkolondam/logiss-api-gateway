@@ -5,6 +5,25 @@ const { createResponse } = require('./utils/response')
 // Routes yang memerlukan authentication
 const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses']
 
+// Validasi file upload
+function validateFileUpload(data, fieldName) {
+  if (!data[fieldName]) {
+    throw new Error(`${fieldName} diperlukan`)
+  }
+  
+  if (!data[fieldName].startsWith('data:image/')) {
+    throw new Error(`Format ${fieldName} tidak valid. Gunakan base64 image dengan data URL`)
+  }
+
+  // Validate base64 content
+  const base64Data = data[fieldName].split(',')[1]
+  if (!base64Data) {
+    throw new Error(`Format ${fieldName} tidak valid. Data base64 tidak ditemukan`)
+  }
+
+  return base64Data
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return createResponse(204)
@@ -78,25 +97,37 @@ exports.handler = async (event) => {
               }, { origin })
             }
 
-            // Validate required fields
-            const requiredFields = ['date', 'branch', 'licensePlate', 'category', 'subcategory', 'amount']
-            const missingFields = requiredFields.filter(field => !body.data[field])
-            if (missingFields.length > 0) {
+            try {
+              // Validate required fields
+              const requiredFields = ['date', 'branch', 'licensePlate', 'category', 'subcategory', 'amount']
+              const missingFields = requiredFields.filter(field => !body.data[field])
+              if (missingFields.length > 0) {
+                throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingFields.join(', ')}`)
+              }
+
+              // Validate amount
+              if (typeof body.data.amount !== 'number' || body.data.amount <= 0) {
+                throw new Error('Amount harus berupa angka positif')
+              }
+
+              // Validate date format
+              const expenseDate = new Date(body.data.date)
+              if (isNaN(expenseDate.getTime())) {
+                throw new Error('Format tanggal tidak valid. Gunakan format YYYY-MM-DD')
+              }
+
+              // Validate receipt photo if provided
+              if (body.data.receiptPhoto) {
+                validateFileUpload(body.data, 'receiptPhoto')
+              }
+
+              response = await fetchGas('submitExpenses', body.data)
+            } catch (error) {
               return createResponse(400, {
                 success: false,
-                error: `Data tidak lengkap. Field yang diperlukan: ${missingFields.join(', ')}`
+                error: error.message
               }, { origin })
             }
-
-            // Validate amount
-            if (typeof body.data.amount !== 'number' || body.data.amount <= 0) {
-              return createResponse(400, {
-                success: false,
-                error: 'Amount harus berupa angka positif'
-              }, { origin })
-            }
-
-            response = await fetchGas('submitExpenses', body.data)
             break
 
           default:
@@ -115,17 +146,58 @@ exports.handler = async (event) => {
           }, { origin })
         }
 
-        // Validate required fields including photo
-        const checkinRequired = ['branch', 'vehicleNumber', 'checkInTime', 'initialOdometer', 'checkInPhoto', 'location']
-        const missingCheckin = checkinRequired.filter(field => !body.data[field])
-        if (missingCheckin.length > 0) {
+        try {
+          // Validate required fields
+          const checkinRequired = ['branch', 'vehicleNumber', 'checkInTime', 'initialOdometer', 'checkInPhoto', 'location']
+          const missingCheckin = checkinRequired.filter(field => !body.data[field])
+          if (missingCheckin.length > 0) {
+            throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingCheckin.join(', ')}`)
+          }
+
+          // Validate odometer value
+          if (typeof body.data.initialOdometer !== 'number' || body.data.initialOdometer <= 0) {
+            throw new Error('Nilai odometer harus berupa angka positif')
+          }
+
+          // Validate check-in time
+          const checkInTime = new Date(body.data.checkInTime)
+          if (isNaN(checkInTime.getTime())) {
+            throw new Error('Format waktu check-in tidak valid')
+          }
+
+          // Validate odometer photo
+          validateFileUpload(body.data, 'checkInPhoto')
+
+          // Validate location
+          if (!body.data.location.latitude || !body.data.location.longitude) {
+            throw new Error('Data lokasi tidak lengkap')
+          }
+
+          if (typeof body.data.location.latitude !== 'number' || typeof body.data.location.longitude !== 'number') {
+            throw new Error('Format lokasi tidak valid')
+          }
+
+          response = await fetchGas('submitCheckIn', body.data)
+          
+          // Map specific error messages to status codes
+          if (!response.success) {
+            if (response.error?.includes('Kendaraan sedang dalam perjalanan')) {
+              return createResponse(400, response, { origin })
+            }
+            if (response.error?.includes('Lokasi terlalu jauh')) {
+              return createResponse(400, {
+                success: false,
+                error: response.error,
+                data: response.data // Include distance info
+              }, { origin })
+            }
+          }
+        } catch (error) {
           return createResponse(400, {
             success: false,
-            error: `Data tidak lengkap. Field yang diperlukan: ${missingCheckin.join(', ')}`
+            error: error.message
           }, { origin })
         }
-
-        response = await fetchGas('submitCheckIn', body.data)
         break
 
       case 'checkout':
@@ -136,17 +208,64 @@ exports.handler = async (event) => {
           }, { origin })
         }
 
-        // Validate required fields including photo
-        const checkoutRequired = ['sessionId', 'checkOutTime', 'finalOdometer', 'checkOutPhoto', 'location']
-        const missingCheckout = checkoutRequired.filter(field => !body.data[field])
-        if (missingCheckout.length > 0) {
+        try {
+          // Validate required fields
+          const checkoutRequired = ['sessionId', 'checkOutTime', 'finalOdometer', 'checkOutPhoto', 'location']
+          const missingCheckout = checkoutRequired.filter(field => !body.data[field])
+          if (missingCheckout.length > 0) {
+            throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingCheckout.join(', ')}`)
+          }
+
+          // Validate odometer value
+          if (typeof body.data.finalOdometer !== 'number' || body.data.finalOdometer <= 0) {
+            throw new Error('Nilai odometer harus berupa angka positif')
+          }
+
+          // Validate check-out time
+          const checkOutTime = new Date(body.data.checkOutTime)
+          if (isNaN(checkOutTime.getTime())) {
+            throw new Error('Format waktu check-out tidak valid')
+          }
+
+          // Validate odometer photo
+          validateFileUpload(body.data, 'checkOutPhoto')
+
+          // Validate location
+          if (!body.data.location.latitude || !body.data.location.longitude) {
+            throw new Error('Data lokasi tidak lengkap')
+          }
+
+          if (typeof body.data.location.latitude !== 'number' || typeof body.data.location.longitude !== 'number') {
+            throw new Error('Format lokasi tidak valid')
+          }
+
+          response = await fetchGas('submitCheckOut', body.data)
+          
+          // Map specific error messages to status codes
+          if (!response.success) {
+            if (response.error?.includes('Session tidak ditemukan')) {
+              return createResponse(404, response, { origin })
+            }
+            if (response.error?.includes('Session sudah selesai')) {
+              return createResponse(400, response, { origin })
+            }
+            if (response.error?.includes('Odometer akhir harus lebih besar')) {
+              return createResponse(400, response, { origin })
+            }
+            if (response.error?.includes('Lokasi terlalu jauh')) {
+              return createResponse(400, {
+                success: false,
+                error: response.error,
+                data: response.data // Include distance info
+              }, { origin })
+            }
+          }
+        } catch (error) {
           return createResponse(400, {
             success: false,
-            error: `Data tidak lengkap. Field yang diperlukan: ${missingCheckout.join(', ')}`
+            error: error.message
           }, { origin })
         }
-
-        response = await fetchGas('submitCheckOut', body.data)
         break
 
       case 'branches':
@@ -201,8 +320,13 @@ exports.handler = async (event) => {
     }
 
     if (!response.success) {
+      // Determine status code based on error message
       const statusCode = response.error?.includes('tidak ditemukan') ? 404 :
-                        response.error?.includes('tidak lengkap') ? 400 :
+                        response.error?.includes('tidak lengkap') || 
+                        response.error?.includes('sedang dalam perjalanan') ||
+                        response.error?.includes('sudah selesai') ||
+                        response.error?.includes('harus lebih besar') ||
+                        response.error?.includes('terlalu jauh') ? 400 :
                         500
 
       return createResponse(statusCode, response, { origin })
