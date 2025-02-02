@@ -3036,13 +3036,16 @@ var require_gas = __commonJS({
       "register",
       "submitCheckIn",
       "submitCheckOut",
-      "submitForm",
+      "submitDelivery",
       "submitExpenses"
     ];
     var FILE_TYPES = {
       checkInPhoto: "odometerCheckin",
       checkOutPhoto: "odometerCheckout",
-      receiptPhoto: "receiptPhoto"
+      receiptPhoto: "receiptPhoto",
+      deliveryCheckinPhoto: "deliveryCheckinPhoto",
+      deliveryPhoto: "deliveryPhoto",
+      paymentPhoto: "paymentPhoto"
     };
     async function fetchGas2(action, data = null) {
       try {
@@ -3081,6 +3084,9 @@ var require_gas = __commonJS({
           }
           if (action === "submitCheckOut" && processedData.checkOutTime) {
             processedData.checkOutTime = new Date(processedData.checkOutTime).toISOString();
+          }
+          if (action === "submitDelivery" && processedData.deliveryTime) {
+            processedData.deliveryTime = new Date(processedData.deliveryTime).toISOString();
           }
           options.body = JSON.stringify({
             action,
@@ -3154,6 +3160,23 @@ var require_gas = __commonJS({
             }
             if (expense.receiptPhotoUrl) {
               expense.receiptPhotoUrl = expense.receiptPhotoUrl.replace(/\\/g, "");
+            }
+          });
+        }
+        if (action.startsWith("get") && action.includes("Deliver")) {
+          const deliveries = responseData.data?.deliveries || [];
+          deliveries.forEach((delivery) => {
+            if (delivery.checkinPhotoUrl) {
+              delivery.checkinPhotoUrl = delivery.checkinPhotoUrl.replace(/\\/g, "");
+            }
+            if (delivery.deliveryPhotoUrl) {
+              delivery.deliveryPhotoUrl = delivery.deliveryPhotoUrl.replace(/\\/g, "");
+            }
+            if (delivery.paymentPhotoUrl) {
+              delivery.paymentPhotoUrl = delivery.paymentPhotoUrl.replace(/\\/g, "");
+            }
+            if (typeof delivery.invoiceAmount === "string") {
+              delivery.invoiceAmount = parseFloat(delivery.invoiceAmount);
             }
           });
         }
@@ -7280,6 +7303,102 @@ exports.handler = async (event) => {
     }
     let response;
     switch (path) {
+      case "delivery":
+        switch (event.httpMethod) {
+          case "GET":
+            if (params.id) {
+              response = await fetchGas("getDelivery", { id: params.id });
+              break;
+            }
+            if (params.context) {
+              if (!params.branch) {
+                return createResponse(400, {
+                  success: false,
+                  error: "Parameter branch diperlukan"
+                }, { origin: origin2 });
+              }
+              response = await fetchGas("getDeliveriesContext", {
+                context: params.context,
+                branch: params.branch,
+                range: params.range
+              });
+              break;
+            }
+            if (!params.branch) {
+              return createResponse(400, {
+                success: false,
+                error: "Parameter branch diperlukan"
+              }, { origin: origin2 });
+            }
+            response = await fetchGas("getDeliveries", {
+              branch: params.branch,
+              range: params.range
+            });
+            break;
+          case "POST":
+            if (!body?.data) {
+              return createResponse(400, {
+                success: false,
+                error: "Data delivery diperlukan"
+              }, { origin: origin2 });
+            }
+            try {
+              const requiredFields = [
+                "branch",
+                "helperName",
+                "vehicleNumber",
+                "deliveryTime",
+                "storeName",
+                "storeAddress",
+                "invoiceNumber",
+                "invoiceAmount",
+                "paymentType",
+                "deliveryCheckinPhoto",
+                "location"
+              ];
+              const missingFields = requiredFields.filter((field) => !body.data[field]);
+              if (missingFields.length > 0) {
+                throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingFields.join(", ")}`);
+              }
+              const deliveryTime = new Date(body.data.deliveryTime);
+              if (isNaN(deliveryTime.getTime())) {
+                throw new Error("Format waktu pengiriman tidak valid");
+              }
+              if (typeof body.data.invoiceAmount !== "number" || body.data.invoiceAmount <= 0) {
+                throw new Error("Nilai faktur harus berupa angka positif");
+              }
+              const validPaymentTypes = ["CASH", "TRANSFER", "GIRO"];
+              if (!validPaymentTypes.includes(body.data.paymentType)) {
+                throw new Error("Tipe pembayaran tidak valid");
+              }
+              if (!body.data.location.latitude || !body.data.location.longitude) {
+                throw new Error("Data lokasi tidak lengkap");
+              }
+              if (typeof body.data.location.latitude !== "number" || typeof body.data.location.longitude !== "number") {
+                throw new Error("Format lokasi tidak valid");
+              }
+              validateFileUpload(body.data, "deliveryCheckinPhoto");
+              if (body.data.deliveryPhoto) {
+                validateFileUpload(body.data, "deliveryPhoto");
+              }
+              if (body.data.paymentPhoto) {
+                validateFileUpload(body.data, "paymentPhoto");
+              }
+              response = await fetchGas("submitDelivery", body.data);
+            } catch (error) {
+              return createResponse(400, {
+                success: false,
+                error: error.message
+              }, { origin: origin2 });
+            }
+            break;
+          default:
+            return createResponse(405, {
+              success: false,
+              error: "Method not allowed"
+            }, { origin: origin2 });
+        }
+        break;
       case "expenses":
         switch (event.httpMethod) {
           case "GET":

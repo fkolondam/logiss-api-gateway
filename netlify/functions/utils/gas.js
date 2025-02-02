@@ -9,7 +9,7 @@ const POST_ACTIONS = [
   'register',
   'submitCheckIn',
   'submitCheckOut',
-  'submitForm',
+  'submitDelivery',
   'submitExpenses'
 ]
 
@@ -17,7 +17,10 @@ const POST_ACTIONS = [
 const FILE_TYPES = {
   checkInPhoto: 'odometerCheckin',
   checkOutPhoto: 'odometerCheckout',
-  receiptPhoto: 'receiptPhoto'
+  receiptPhoto: 'receiptPhoto',
+  deliveryCheckinPhoto: 'deliveryCheckinPhoto',
+  deliveryPhoto: 'deliveryPhoto',
+  paymentPhoto: 'paymentPhoto'
 }
 
 async function fetchGas(action, data = null) {
@@ -71,6 +74,9 @@ async function fetchGas(action, data = null) {
       }
       if (action === 'submitCheckOut' && processedData.checkOutTime) {
         processedData.checkOutTime = new Date(processedData.checkOutTime).toISOString()
+      }
+      if (action === 'submitDelivery' && processedData.deliveryTime) {
+        processedData.deliveryTime = new Date(processedData.deliveryTime).toISOString()
       }
 
       // Add action to body for POST requests
@@ -164,6 +170,26 @@ async function fetchGas(action, data = null) {
         }
         if (expense.receiptPhotoUrl) {
           expense.receiptPhotoUrl = expense.receiptPhotoUrl.replace(/\\/g, '')
+        }
+      })
+    }
+
+    // Special handling for delivery responses
+    if (action.startsWith('get') && action.includes('Deliver')) {
+      // Clean up photo URLs
+      const deliveries = responseData.data?.deliveries || []
+      deliveries.forEach(delivery => {
+        if (delivery.checkinPhotoUrl) {
+          delivery.checkinPhotoUrl = delivery.checkinPhotoUrl.replace(/\\/g, '')
+        }
+        if (delivery.deliveryPhotoUrl) {
+          delivery.deliveryPhotoUrl = delivery.deliveryPhotoUrl.replace(/\\/g, '')
+        }
+        if (delivery.paymentPhotoUrl) {
+          delivery.paymentPhotoUrl = delivery.paymentPhotoUrl.replace(/\\/g, '')
+        }
+        if (typeof delivery.invoiceAmount === 'string') {
+          delivery.invoiceAmount = parseFloat(delivery.invoiceAmount)
         }
       })
     }

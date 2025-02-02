@@ -66,6 +66,127 @@ exports.handler = async (event) => {
     let response
 
     switch (path) {
+      case 'delivery':
+        switch (event.httpMethod) {
+          case 'GET':
+            // Handle get delivery by ID
+            if (params.id) {
+              response = await fetchGas('getDelivery', { id: params.id })
+              break
+            }
+
+            // Handle get deliveries with context
+            if (params.context) {
+              if (!params.branch) {
+                return createResponse(400, {
+                  success: false,
+                  error: 'Parameter branch diperlukan'
+                }, { origin })
+              }
+              response = await fetchGas('getDeliveriesContext', {
+                context: params.context,
+                branch: params.branch,
+                range: params.range
+              })
+              break
+            }
+
+            // Handle get all deliveries
+            if (!params.branch) {
+              return createResponse(400, {
+                success: false,
+                error: 'Parameter branch diperlukan'
+              }, { origin })
+            }
+            response = await fetchGas('getDeliveries', {
+              branch: params.branch,
+              range: params.range
+            })
+            break
+
+          case 'POST':
+            if (!body?.data) {
+              return createResponse(400, {
+                success: false,
+                error: 'Data delivery diperlukan'
+              }, { origin })
+            }
+
+            try {
+              // Validate required fields
+              const requiredFields = [
+                'branch', 
+                'helperName',
+                'vehicleNumber', 
+                'deliveryTime',
+                'storeName',
+                'storeAddress',
+                'invoiceNumber',
+                'invoiceAmount',
+                'paymentType',
+                'deliveryCheckinPhoto',
+                'location'
+              ]
+              const missingFields = requiredFields.filter(field => !body.data[field])
+              if (missingFields.length > 0) {
+                throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingFields.join(', ')}`)
+              }
+
+              // Validate delivery time
+              const deliveryTime = new Date(body.data.deliveryTime)
+              if (isNaN(deliveryTime.getTime())) {
+                throw new Error('Format waktu pengiriman tidak valid')
+              }
+
+              // Validate invoice amount
+              if (typeof body.data.invoiceAmount !== 'number' || body.data.invoiceAmount <= 0) {
+                throw new Error('Nilai faktur harus berupa angka positif')
+              }
+
+              // Validate payment type
+              const validPaymentTypes = ['CASH', 'TRANSFER', 'GIRO']
+              if (!validPaymentTypes.includes(body.data.paymentType)) {
+                throw new Error('Tipe pembayaran tidak valid')
+              }
+
+              // Validate location
+              if (!body.data.location.latitude || !body.data.location.longitude) {
+                throw new Error('Data lokasi tidak lengkap')
+              }
+
+              if (typeof body.data.location.latitude !== 'number' || 
+                  typeof body.data.location.longitude !== 'number') {
+                throw new Error('Format lokasi tidak valid')
+              }
+
+              // Validate required photos
+              validateFileUpload(body.data, 'deliveryCheckinPhoto')
+
+              // Validate optional photos if provided
+              if (body.data.deliveryPhoto) {
+                validateFileUpload(body.data, 'deliveryPhoto')
+              }
+              if (body.data.paymentPhoto) {
+                validateFileUpload(body.data, 'paymentPhoto')
+              }
+
+              response = await fetchGas('submitDelivery', body.data)
+            } catch (error) {
+              return createResponse(400, {
+                success: false,
+                error: error.message
+              }, { origin })
+            }
+            break
+
+          default:
+            return createResponse(405, {
+              success: false,
+              error: 'Method not allowed'
+            }, { origin })
+        }
+        break
+
       case 'expenses':
         switch (event.httpMethod) {
           case 'GET':
