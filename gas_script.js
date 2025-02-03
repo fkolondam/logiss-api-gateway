@@ -136,7 +136,7 @@ function doGet(e) {
     case 'getDelivery':
       return getDelivery(getParam(e, 'id'))
     case 'getDeliveries':
-      return getDeliveries(getParam(e, 'data'))
+      return getDeliveries(getParam(e, 'branch'), getParam(e, 'range'))
     case 'getDeliveriesContext':
       return getDeliveriesContext({
         branch: getParam(e, 'branch'),
@@ -1419,13 +1419,12 @@ function submitDelivery(data) {
     const jakartaDate = new Date(deliveryDate.getTime() + (7 * 60 * 60 * 1000)) // UTC+7 for Jakarta
     const deliveryId = generateDeliveryId(data.branch, jakartaDate)
 
-      // Upload all photos in parallel
-      const uploadPromises = [
-        uploadFile(data.deliveryCheckinPhoto, 'deliveryCheckinPhoto', `delivery_checkin_${deliveryId}`),
-        data.deliveryPhoto ? uploadFile(data.deliveryPhoto, 'deliveryPhoto', `delivery_photo_${deliveryId}`) : Promise.resolve(null),
-        data.paymentPhoto ? uploadFile(data.paymentPhoto, 'paymentPhoto', `payment_photo_${deliveryId}`) : Promise.resolve(null)
-      ];
-      const uploadResults = await Promise.all(uploadPromises);
+    // Upload all photos
+    const uploadResults = {
+      checkin: uploadFile(data.deliveryCheckinPhoto, 'deliveryCheckinPhoto', `delivery_checkin_${deliveryId}`),
+      delivery: data.deliveryPhoto ? uploadFile(data.deliveryPhoto, 'deliveryPhoto', `delivery_photo_${deliveryId}`) : null,
+      payment: data.paymentPhoto ? uploadFile(data.paymentPhoto, 'paymentPhoto', `payment_photo_${deliveryId}`) : null
+    }
 
     // Validate uploads
     if (!uploadResults.checkin.success) {
@@ -1514,9 +1513,9 @@ function getDelivery(id) {
   }
 }
 
-function getDeliveries(data) {
+function getDeliveries(branch, range) {
   try {
-    if (!data.branch) {
+    if (!branch) {
       return sendError('Branch parameter required')
     }
 
@@ -1525,17 +1524,45 @@ function getDeliveries(data) {
     const headers = values.shift()
 
     let deliveries = values
-      .filter(row => row[DeliveryCol.BRANCH] === data.branch)
-      .map(mapDeliveryRow)
+      .filter(row => row[DeliveryCol.BRANCH] === branch)
+      .map(row => ({
+        id: row[DeliveryCol.ID],
+        timestamp: toUTCString(new Date(row[DeliveryCol.TIMESTAMP])) + 'Z',
+        branch: row[DeliveryCol.BRANCH],
+        driverName: row[DeliveryCol.DRIVER],
+        helperName: row[DeliveryCol.HELPER],
+        vehicleNumber: row[DeliveryCol.VEHICLE],
+        deliveryTime: toUTCString(new Date(row[DeliveryCol.DELIVERY_TIME])) + 'Z',
+        storeName: row[DeliveryCol.STORE_NAME],
+        storeAddress: row[DeliveryCol.STORE_ADDRESS],
+        invoiceNumber: row[DeliveryCol.INVOICE_NUMBER],
+        invoiceAmount: parseFloat(row[DeliveryCol.INVOICE_AMOUNT]),
+        paymentType: row[DeliveryCol.PAYMENT_TYPE],
+        status: row[DeliveryCol.STATUS],
+        checkinPhotoUrl: row[DeliveryCol.CHECKIN_PHOTO],
+        deliveryPhotoUrl: row[DeliveryCol.DELIVERY_PHOTO] || '',
+        paymentPhotoUrl: row[DeliveryCol.PAYMENT_PHOTO] || '',
+        location: {
+          latitude: parseFloat(row[DeliveryCol.LATITUDE]),
+          longitude: parseFloat(row[DeliveryCol.LONGITUDE]),
+          raw: JSON.stringify({
+            latitude: parseFloat(row[DeliveryCol.LATITUDE]),
+            longitude: parseFloat(row[DeliveryCol.LONGITUDE])
+          })
+        }
+      }));
 
     // Apply date range filter if provided
-    if (data.range) {
-      const [startDate, endDate] = data.range.split(',').map(d => new Date(d))
+    if (range) {
+      const [startDate, endDate] = range.split(',').map(d => new Date(d))
       deliveries = deliveries.filter(d => {
         const deliveryDate = new Date(d.deliveryTime)
         return deliveryDate >= startDate && deliveryDate <= endDate
       })
     }
+
+    // Force completion
+    SpreadsheetApp.flush()
 
     return sendResponse({
       success: true,
@@ -1563,7 +1590,32 @@ function getDeliveriesContext(data) {
         row[DeliveryCol.BRANCH] === data.branch && 
         row[DeliveryCol.STATUS] === data.context
       )
-      .map(mapDeliveryRow)
+      .map(row => ({
+        id: row[DeliveryCol.ID],
+        timestamp: toUTCString(new Date(row[DeliveryCol.TIMESTAMP])) + 'Z',
+        branch: row[DeliveryCol.BRANCH],
+        driverName: row[DeliveryCol.DRIVER],
+        helperName: row[DeliveryCol.HELPER],
+        vehicleNumber: row[DeliveryCol.VEHICLE],
+        deliveryTime: toUTCString(new Date(row[DeliveryCol.DELIVERY_TIME])) + 'Z',
+        storeName: row[DeliveryCol.STORE_NAME],
+        storeAddress: row[DeliveryCol.STORE_ADDRESS],
+        invoiceNumber: row[DeliveryCol.INVOICE_NUMBER],
+        invoiceAmount: parseFloat(row[DeliveryCol.INVOICE_AMOUNT]),
+        paymentType: row[DeliveryCol.PAYMENT_TYPE],
+        status: row[DeliveryCol.STATUS],
+        checkinPhotoUrl: row[DeliveryCol.CHECKIN_PHOTO],
+        deliveryPhotoUrl: row[DeliveryCol.DELIVERY_PHOTO] || '',
+        paymentPhotoUrl: row[DeliveryCol.PAYMENT_PHOTO] || '',
+        location: {
+          latitude: parseFloat(row[DeliveryCol.LATITUDE]),
+          longitude: parseFloat(row[DeliveryCol.LONGITUDE]),
+          raw: JSON.stringify({
+            latitude: parseFloat(row[DeliveryCol.LATITUDE]),
+            longitude: parseFloat(row[DeliveryCol.LONGITUDE])
+          })
+        }
+      }))
 
     // Apply date range filter if provided
     if (data.range) {
@@ -1573,6 +1625,9 @@ function getDeliveriesContext(data) {
         return deliveryDate >= startDate && deliveryDate <= endDate
       })
     }
+
+    // Force completion
+    SpreadsheetApp.flush()
 
     return sendResponse({
       success: true,
@@ -1586,6 +1641,7 @@ function getDeliveriesContext(data) {
 }
 
 function getAvailableInvoices(data) {
+    Logger.log('Received data for available invoices:', data);
   try {
     if (!data.branch || !data.date) {
       return sendError('Branch dan date parameter diperlukan')
@@ -1611,7 +1667,8 @@ function getAvailableInvoices(data) {
         .map(row => row[DeliveryCol.INVOICE_NUMBER])
     )
 
-    // Filter available invoices
+    Logger.log('Existing invoices:', existingInvoices);
+    Logger.log('Invoice data:', invoiceData);
     let invoices = invoiceData
       .filter(row => {
         const invoiceNumber = row[0] // Assuming invoice number is first column
