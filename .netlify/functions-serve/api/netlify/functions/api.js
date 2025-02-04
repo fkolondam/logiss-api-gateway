@@ -3690,9 +3690,23 @@ var require_node_cache2 = __commonJS({
 var require_cache = __commonJS({
   "netlify/functions/utils/cache.js"(exports2, module2) {
     var NodeCache = require_node_cache2();
+    var TTL_CONFIG = {
+      branch: 86400,
+      // 24 hours
+      vehicle: 43200,
+      // 12 hours
+      invoice: 3600,
+      // 1 hour
+      delivery: 1800,
+      // 30 minutes
+      expenses: 1800
+      // 30 minutes
+    };
     var cache = new NodeCache({
       stdTTL: 3600,
+      // Default TTL 1 hour
       checkperiod: 600
+      // Check period 10 minutes
     });
     var getCacheKey = (type, params) => {
       switch (type) {
@@ -3711,12 +3725,13 @@ var require_cache = __commonJS({
           return `${type}_${JSON.stringify(params)}`;
       }
     };
-    var cacheService = {
+    var cacheService2 = {
       get: (key) => {
         return cache.get(key);
       },
-      set: (key, data) => {
-        return cache.set(key, data);
+      set: (key, data, type) => {
+        const ttl = TTL_CONFIG[type] || 3600;
+        return cache.set(key, data, ttl);
       },
       del: (key) => {
         return cache.del(key);
@@ -3732,22 +3747,34 @@ var require_cache = __commonJS({
         console.log(`Cache miss for ${cacheKey}, fetching from GAS`);
         const response = await fetchGas2(action, params);
         if (response.success) {
-          console.log(`Caching response for ${cacheKey}`);
-          cache.set(cacheKey, response);
+          console.log(`Caching response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
+          cache.set(cacheKey, response, TTL_CONFIG[type]);
         }
         return response;
       },
       // Fungsi spesifik untuk tiap tipe data
       getOrFetchInvoices: async (fetchGas2, branch, date, ranged = false) => {
-        return cacheService.getOrFetchData(
-          "invoice",
-          { branch, date, ranged },
-          fetchGas2,
-          ranged ? "getRangedInvoiceList" : "getInvoiceList"
+        const type = "invoice";
+        const params = { branch, date, ranged };
+        const cacheKey = getCacheKey(type, params);
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+          console.log(`Cache hit for invoices: ${cacheKey}`);
+          return cachedData;
+        }
+        console.log(`Cache miss for invoices: ${cacheKey}, fetching from GAS`);
+        const response = await fetchGas2(
+          ranged ? "getRangedInvoiceList" : "getInvoiceList",
+          params
         );
+        if (response.success) {
+          console.log(`Caching invoice response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
+          cache.set(cacheKey, response, TTL_CONFIG[type]);
+        }
+        return response;
       },
       getOrFetchVehicles: async (fetchGas2, branch) => {
-        return cacheService.getOrFetchData(
+        return cacheService2.getOrFetchData(
           "vehicle",
           { branch },
           fetchGas2,
@@ -3755,7 +3782,7 @@ var require_cache = __commonJS({
         );
       },
       getOrFetchBranches: async (fetchGas2) => {
-        return cacheService.getOrFetchData(
+        return cacheService2.getOrFetchData(
           "branch",
           {},
           fetchGas2,
@@ -3764,20 +3791,23 @@ var require_cache = __commonJS({
       },
       // Fungsi baru untuk expenses
       getOrFetchExpenses: async (fetchGas2, params) => {
-        if (params.context) {
-          return cacheService.getOrFetchData(
-            "expenses",
-            { context: params.context, range: params.range },
-            fetchGas2,
-            "getFilteredExpenses"
-          );
+        const type = "expenses";
+        const cacheKey = getCacheKey(type, params);
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+          console.log(`Cache hit for expenses: ${cacheKey}`);
+          return cachedData;
         }
-        return cacheService.getOrFetchData(
-          "expenses",
-          { branch: params.branch, category: params.category, range: params.range },
-          fetchGas2,
-          "getExpenses"
+        console.log(`Cache miss for expenses: ${cacheKey}, fetching from GAS`);
+        const response = await fetchGas2(
+          params.context ? "getFilteredExpenses" : "getExpenses",
+          params
         );
+        if (response.success) {
+          console.log(`Caching expenses response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
+          cache.set(cacheKey, response, TTL_CONFIG[type]);
+        }
+        return response;
       },
       // Fungsi untuk invalidate cache berdasarkan pattern
       invalidateByPattern: (pattern) => {
@@ -3797,7 +3827,7 @@ var require_cache = __commonJS({
         };
       }
     };
-    module2.exports = cacheService;
+    module2.exports = cacheService2;
   }
 });
 
@@ -3828,24 +3858,24 @@ var require_gas = __commonJS({
       "activate"
     ];
     var CACHE_DURATION = {
-      getAvailableInvoices: 60,
-      // 1 minute
-      getBranchConfig: 3600,
+      getAvailableInvoices: 3600,
       // 1 hour
-      getVehicleData: 3600,
-      // 1 hour
-      getDeliveries: 300,
-      // 5 minutes
-      getDeliveriesContext: 300,
-      // 5 minutes
-      getDelivery: 300,
-      // 5 minutes
-      getExpenses: 300,
-      // 5 minutes
-      getFilteredExpenses: 300,
-      // 5 minutes
-      activate: 3600
-      // 1 hour since activation tokens don't change frequently
+      getBranchConfig: 86400,
+      // 24 hours
+      getVehicleData: 43200,
+      // 12 hours
+      getDeliveries: 1800,
+      // 30 minutes
+      getDeliveriesContext: 1800,
+      // 30 minutes
+      getDelivery: 1800,
+      // 30 minutes
+      getExpenses: 1800,
+      // 30 minutes
+      getFilteredExpenses: 1800,
+      // 30 minutes
+      activate: 86400
+      // 24 hours since activation tokens don't change frequently
     };
     var FILE_TYPES = {
       checkInPhoto: "odometerCheckin",
@@ -8115,7 +8145,8 @@ var require_response = __commonJS({
 var { fetchGas } = require_gas();
 var { verifyToken, getTokenFromRequest, generateToken } = require_auth();
 var { createResponse } = require_response();
-var PROTECTED_ROUTES = ["checkin", "checkout", "delivery", "expenses", "available-invoices"];
+var cacheService = require_cache();
+var PROTECTED_ROUTES = ["checkin", "checkout", "delivery", "expenses", "available-invoices", "invoices"];
 function validateFileUpload(data, fieldName) {
   if (!data[fieldName]) {
     throw new Error(`${fieldName} diperlukan`);
@@ -8240,17 +8271,23 @@ exports.handler = async (event) => {
         const day = dateObj.getDate();
         const year = dateObj.getFullYear();
         const formattedDate = `${month}/${day}/${year}`;
-        response = await fetchGas("getAvailableInvoices", {
-          branch: params.branch,
-          date: formattedDate,
-          range: params.range
-        });
+        response = await cacheService.getOrFetchData(
+          "invoice",
+          { branch: params.branch, date: formattedDate, range: params.range },
+          fetchGas,
+          "getAvailableInvoices"
+        );
         break;
       case "delivery":
         switch (event.httpMethod) {
           case "GET":
             if (params.id) {
-              response = await fetchGas("getDelivery", { id: params.id });
+              response = await cacheService.getOrFetchData(
+                "delivery",
+                { id: params.id },
+                fetchGas,
+                "getDelivery"
+              );
               break;
             }
             if (params.context) {
@@ -8260,11 +8297,12 @@ exports.handler = async (event) => {
                   error: "Parameter branch diperlukan"
                 }, { origin: origin2 });
               }
-              response = await fetchGas("getDeliveriesContext", {
-                context: params.context,
-                branch: params.branch,
-                range: params.range
-              });
+              response = await cacheService.getOrFetchData(
+                "delivery",
+                { context: params.context, branch: params.branch, range: params.range },
+                fetchGas,
+                "getDeliveriesContext"
+              );
               break;
             }
             if (!params.branch) {
@@ -8273,10 +8311,12 @@ exports.handler = async (event) => {
                 error: "Parameter branch diperlukan"
               }, { origin: origin2 });
             }
-            response = await fetchGas("getDeliveries", {
-              branch: params.branch,
-              range: params.range
-            });
+            response = await cacheService.getOrFetchData(
+              "delivery",
+              { branch: params.branch, range: params.range },
+              fetchGas,
+              "getDeliveries"
+            );
             break;
           case "POST":
             if (!body?.data) {
@@ -8346,7 +8386,7 @@ exports.handler = async (event) => {
         switch (event.httpMethod) {
           case "GET":
             if (params.context) {
-              response = await fetchGas("getFilteredExpenses", {
+              response = await cacheService.getOrFetchExpenses(fetchGas, {
                 context: params.context,
                 range: params.range
               });
@@ -8357,7 +8397,7 @@ exports.handler = async (event) => {
                   error: "Parameter branch diperlukan"
                 }, { origin: origin2 });
               }
-              response = await fetchGas("getExpenses", {
+              response = await cacheService.getOrFetchExpenses(fetchGas, {
                 branch: params.branch,
                 category: params.category,
                 range: params.range
@@ -8505,7 +8545,7 @@ exports.handler = async (event) => {
         }
         break;
       case "branches":
-        response = await fetchGas("getBranchConfig");
+        response = await cacheService.getOrFetchBranches(fetchGas);
         break;
       case "vehicles":
         if (!params.branch) {
@@ -8514,7 +8554,7 @@ exports.handler = async (event) => {
             error: "Branch parameter required"
           }, { origin: origin2 });
         }
-        response = await fetchGas("getVehicleData", params.branch);
+        response = await cacheService.getOrFetchVehicles(fetchGas, params.branch);
         break;
       case "invoices":
         if (!params.branch || !params.date) {
@@ -8534,13 +8574,25 @@ exports.handler = async (event) => {
         const invoiceDay = invoiceDateObj.getDate();
         const invoiceYear = invoiceDateObj.getFullYear();
         const invoiceFormattedDate = `${invoiceMonth}/${invoiceDay}/${invoiceYear}`;
-        response = await fetchGas(
-          params.ranged === "true" ? "getRangedInvoiceList" : "getInvoiceList",
-          {
-            branch: params.branch,
-            date: invoiceFormattedDate
-          }
+        response = await cacheService.getOrFetchInvoices(
+          fetchGas,
+          params.branch,
+          invoiceFormattedDate,
+          params.ranged === "true"
         );
+        break;
+      case "cache":
+        if (params.action === "stats") {
+          response = {
+            success: true,
+            data: cacheService.getStats()
+          };
+        } else {
+          return createResponse(400, {
+            success: false,
+            error: "Invalid cache action"
+          }, { origin: origin2 });
+        }
         break;
       default:
         return createResponse(404, {

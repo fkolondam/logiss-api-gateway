@@ -1,9 +1,18 @@
 const NodeCache = require('node-cache');
 
-// Cache dengan TTL 1 jam dan check period 10 menit
+// TTL configurations (in seconds)
+const TTL_CONFIG = {
+  branch: 86400,    // 24 hours
+  vehicle: 43200,   // 12 hours
+  invoice: 3600,    // 1 hour
+  delivery: 1800,   // 30 minutes
+  expenses: 1800    // 30 minutes
+};
+
+// Cache dengan default TTL 1 jam dan check period 10 menit
 const cache = new NodeCache({
-  stdTTL: 3600,
-  checkperiod: 600
+  stdTTL: 3600,     // Default TTL 1 hour
+  checkperiod: 600  // Check period 10 minutes
 });
 
 // Key generators untuk berbagai tipe data
@@ -31,8 +40,9 @@ const cacheService = {
     return cache.get(key);
   },
 
-  set: (key, data) => {
-    return cache.set(key, data);
+  set: (key, data, type) => {
+    const ttl = TTL_CONFIG[type] || 3600; // Use type-specific TTL or default to 1 hour
+    return cache.set(key, data, ttl);
   },
 
   del: (key) => {
@@ -53,8 +63,8 @@ const cacheService = {
     const response = await fetchGas(action, params);
 
     if (response.success) {
-      console.log(`Caching response for ${cacheKey}`);
-      cache.set(cacheKey, response);
+      console.log(`Caching response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
+      cache.set(cacheKey, response, TTL_CONFIG[type]);
     }
 
     return response;
@@ -62,12 +72,28 @@ const cacheService = {
 
   // Fungsi spesifik untuk tiap tipe data
   getOrFetchInvoices: async (fetchGas, branch, date, ranged = false) => {
-    return cacheService.getOrFetchData(
-      'invoice',
-      { branch, date, ranged },
-      fetchGas,
-      ranged ? 'getRangedInvoiceList' : 'getInvoiceList'
+    const type = 'invoice';
+    const params = { branch, date, ranged };
+    const cacheKey = getCacheKey(type, params);
+    const cachedData = cache.get(cacheKey);
+
+    if (cachedData) {
+      console.log(`Cache hit for invoices: ${cacheKey}`);
+      return cachedData;
+    }
+
+    console.log(`Cache miss for invoices: ${cacheKey}, fetching from GAS`);
+    const response = await fetchGas(
+      ranged ? 'getRangedInvoiceList' : 'getInvoiceList',
+      params
     );
+
+    if (response.success) {
+      console.log(`Caching invoice response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
+      cache.set(cacheKey, response, TTL_CONFIG[type]);
+    }
+
+    return response;
   },
 
   getOrFetchVehicles: async (fetchGas, branch) => {
@@ -90,20 +116,27 @@ const cacheService = {
 
   // Fungsi baru untuk expenses
   getOrFetchExpenses: async (fetchGas, params) => {
-    if (params.context) {
-      return cacheService.getOrFetchData(
-        'expenses',
-        { context: params.context, range: params.range },
-        fetchGas,
-        'getFilteredExpenses'
-      );
+    const type = 'expenses';
+    const cacheKey = getCacheKey(type, params);
+    const cachedData = cache.get(cacheKey);
+
+    if (cachedData) {
+      console.log(`Cache hit for expenses: ${cacheKey}`);
+      return cachedData;
     }
-    return cacheService.getOrFetchData(
-      'expenses',
-      { branch: params.branch, category: params.category, range: params.range },
-      fetchGas,
-      'getExpenses'
+
+    console.log(`Cache miss for expenses: ${cacheKey}, fetching from GAS`);
+    const response = await fetchGas(
+      params.context ? 'getFilteredExpenses' : 'getExpenses',
+      params
     );
+
+    if (response.success) {
+      console.log(`Caching expenses response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
+      cache.set(cacheKey, response, TTL_CONFIG[type]);
+    }
+
+    return response;
   },
 
   // Fungsi untuk invalidate cache berdasarkan pattern

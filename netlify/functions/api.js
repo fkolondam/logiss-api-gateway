@@ -1,9 +1,10 @@
 const { fetchGas } = require('./utils/gas')
 const { verifyToken, getTokenFromRequest, generateToken } = require('./utils/auth')
 const { createResponse } = require('./utils/response')
+const cacheService = require('./utils/cache')
 
 // Routes yang memerlukan authentication
-const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices']
+const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices', 'invoices']
 
 // Validasi file upload
 function validateFileUpload(data, fieldName) {
@@ -156,11 +157,12 @@ exports.handler = async (event) => {
         const year = dateObj.getFullYear()
         const formattedDate = `${month}/${day}/${year}`
 
-        response = await fetchGas('getAvailableInvoices', {
-          branch: params.branch,
-          date: formattedDate,
-          range: params.range
-        })
+        response = await cacheService.getOrFetchData(
+          'invoice',
+          { branch: params.branch, date: formattedDate, range: params.range },
+          fetchGas,
+          'getAvailableInvoices'
+        )
         break
 
       case 'delivery':
@@ -168,7 +170,12 @@ exports.handler = async (event) => {
           case 'GET':
             // Handle get delivery by ID
             if (params.id) {
-              response = await fetchGas('getDelivery', { id: params.id })
+              response = await cacheService.getOrFetchData(
+                'delivery',
+                { id: params.id },
+                fetchGas,
+                'getDelivery'
+              )
               break
             }
 
@@ -180,11 +187,12 @@ exports.handler = async (event) => {
                   error: 'Parameter branch diperlukan'
                 }, { origin })
               }
-              response = await fetchGas('getDeliveriesContext', {
-                context: params.context,
-                branch: params.branch,
-                range: params.range
-              })
+              response = await cacheService.getOrFetchData(
+                'delivery',
+                { context: params.context, branch: params.branch, range: params.range },
+                fetchGas,
+                'getDeliveriesContext'
+              )
               break
             }
 
@@ -195,10 +203,12 @@ exports.handler = async (event) => {
                 error: 'Parameter branch diperlukan'
               }, { origin })
             }
-            response = await fetchGas('getDeliveries', {
-              branch: params.branch,
-              range: params.range
-            })
+            response = await cacheService.getOrFetchData(
+              'delivery',
+              { branch: params.branch, range: params.range },
+              fetchGas,
+              'getDeliveries'
+            )
             break
 
           case 'POST':
@@ -288,7 +298,7 @@ exports.handler = async (event) => {
         switch (event.httpMethod) {
           case 'GET':
             if (params.context) {
-              response = await fetchGas('getFilteredExpenses', {
+              response = await cacheService.getOrFetchExpenses(fetchGas, {
                 context: params.context,
                 range: params.range
               })
@@ -299,7 +309,7 @@ exports.handler = async (event) => {
                   error: 'Parameter branch diperlukan'
                 }, { origin })
               }
-              response = await fetchGas('getExpenses', {
+              response = await cacheService.getOrFetchExpenses(fetchGas, {
                 branch: params.branch,
                 category: params.category,
                 range: params.range
@@ -487,7 +497,7 @@ exports.handler = async (event) => {
         break
 
       case 'branches':
-        response = await fetchGas('getBranchConfig')
+        response = await cacheService.getOrFetchBranches(fetchGas)
         break
 
       case 'vehicles':
@@ -497,7 +507,7 @@ exports.handler = async (event) => {
             error: 'Branch parameter required'
           }, { origin })
         }
-        response = await fetchGas('getVehicleData', params.branch)
+        response = await cacheService.getOrFetchVehicles(fetchGas, params.branch)
         break
 
       case 'invoices':
@@ -521,13 +531,26 @@ exports.handler = async (event) => {
         const invoiceYear = invoiceDateObj.getFullYear()
         const invoiceFormattedDate = `${invoiceMonth}/${invoiceDay}/${invoiceYear}`
 
-        response = await fetchGas(
-          params.ranged === 'true' ? 'getRangedInvoiceList' : 'getInvoiceList',
-          {
-            branch: params.branch,
-            date: invoiceFormattedDate
-          }
+        response = await cacheService.getOrFetchInvoices(
+          fetchGas,
+          params.branch,
+          invoiceFormattedDate,
+          params.ranged === 'true'
         )
+        break
+
+      case 'cache':
+        if (params.action === 'stats') {
+          response = {
+            success: true,
+            data: cacheService.getStats()
+          }
+        } else {
+          return createResponse(400, {
+            success: false,
+            error: 'Invalid cache action'
+          }, { origin })
+        }
         break
 
       default:

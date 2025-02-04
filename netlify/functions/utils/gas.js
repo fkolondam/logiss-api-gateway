@@ -29,15 +29,15 @@ const CACHED_ACTIONS = [
 
 // Cache duration in seconds
 const CACHE_DURATION = {
-  getAvailableInvoices: 60, // 1 minute
-  getBranchConfig: 3600, // 1 hour
-  getVehicleData: 3600, // 1 hour
-  getDeliveries: 300, // 5 minutes
-  getDeliveriesContext: 300, // 5 minutes
-  getDelivery: 300, // 5 minutes
-  getExpenses: 300, // 5 minutes
-  getFilteredExpenses: 300, // 5 minutes
-  activate: 3600 // 1 hour since activation tokens don't change frequently
+  getAvailableInvoices: 3600,    // 1 hour
+  getBranchConfig: 86400,        // 24 hours
+  getVehicleData: 43200,         // 12 hours
+  getDeliveries: 1800,           // 30 minutes
+  getDeliveriesContext: 1800,    // 30 minutes
+  getDelivery: 1800,             // 30 minutes
+  getExpenses: 1800,             // 30 minutes
+  getFilteredExpenses: 1800,     // 30 minutes
+  activate: 86400                // 24 hours since activation tokens don't change frequently
 }
 
 // File upload configurations
