@@ -129,7 +129,7 @@ async function fetchGas(action, data = null) {
       if (data) {
         // For getVehicleData, data is the branch string directly
         if (action === 'getVehicleData') {
-          url.searchParams.append('branch', data)
+          url.searchParams.append('branch', decodeURIComponent(data))
         } else {
           Object.entries(data).forEach(([key, value]) => {
             if (value) {
@@ -227,10 +227,21 @@ async function fetchGas(action, data = null) {
     if (!POST_ACTIONS.includes(action) && CACHED_ACTIONS.includes(action)) {
       const cacheKey = `${action}_${JSON.stringify(data)}`
       const duration = CACHE_DURATION[action] || 3600 // Default 1 hour
-      await cache.set(cacheKey, {
-        success: true,
-        data: responseData.data || responseData
-      }, duration)
+      
+      // Special handling for vehicle data to ensure proper structure
+      if (action === 'getVehicleData') {
+        await cache.set(cacheKey, {
+          success: true,
+          data: {
+            vehicles: responseData.data?.vehicles || []
+          }
+        }, duration)
+      } else {
+        await cache.set(cacheKey, {
+          success: true,
+          data: responseData.data || responseData
+        }, duration)
+      }
     }
     
     // Special handling for expenses responses

@@ -3690,6 +3690,15 @@ var require_node_cache2 = __commonJS({
 var require_cache = __commonJS({
   "netlify/functions/utils/cache.js"(exports2, module2) {
     var NodeCache = require_node_cache2();
+    var cache = new NodeCache({
+      stdTTL: 3600,
+      // Default TTL 1 hour
+      checkperiod: 600
+      // Check period 10 minutes
+    });
+    console.log("Server restarting - Clearing cache...");
+    cache.flushAll();
+    console.log("Cache cleared successfully");
     var TTL_CONFIG = {
       branch: 86400,
       // 24 hours
@@ -3702,12 +3711,6 @@ var require_cache = __commonJS({
       expenses: 1800
       // 30 minutes
     };
-    var cache = new NodeCache({
-      stdTTL: 3600,
-      // Default TTL 1 hour
-      checkperiod: 600
-      // Check period 10 minutes
-    });
     var getCacheKey = (type, params) => {
       switch (type) {
         case "invoice":
@@ -3735,6 +3738,11 @@ var require_cache = __commonJS({
       },
       del: (key) => {
         return cache.del(key);
+      },
+      // Clear all cache
+      clearAll: () => {
+        console.log("Clearing all cache...");
+        return cache.flushAll();
       },
       // Fungsi generik untuk get atau fetch data
       getOrFetchData: async (type, params, fetchGas2, action) => {
@@ -3774,12 +3782,20 @@ var require_cache = __commonJS({
         return response;
       },
       getOrFetchVehicles: async (fetchGas2, branch) => {
-        return cacheService2.getOrFetchData(
-          "vehicle",
-          { branch },
-          fetchGas2,
-          "getVehicleData"
-        );
+        const type = "vehicle";
+        const cacheKey = getCacheKey(type, { branch });
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+          console.log(`Cache hit for vehicles: ${cacheKey}`);
+          return cachedData;
+        }
+        console.log(`Cache miss for vehicles: ${cacheKey}, fetching from GAS`);
+        const response = await fetchGas2("getVehicleData", branch);
+        if (response.success) {
+          console.log(`Caching vehicles response for ${cacheKey}`);
+          cache.set(cacheKey, response, TTL_CONFIG[type]);
+        }
+        return response;
       },
       getOrFetchBranches: async (fetchGas2) => {
         return cacheService2.getOrFetchData(
@@ -3942,7 +3958,7 @@ var require_gas = __commonJS({
           url.searchParams.append("action", action);
           if (data) {
             if (action === "getVehicleData") {
-              url.searchParams.append("branch", data);
+              url.searchParams.append("branch", decodeURIComponent(data));
             } else {
               Object.entries(data).forEach(([key, value]) => {
                 if (value) {
@@ -4020,10 +4036,19 @@ var require_gas = __commonJS({
         if (!POST_ACTIONS.includes(action) && CACHED_ACTIONS.includes(action)) {
           const cacheKey = `${action}_${JSON.stringify(data)}`;
           const duration = CACHE_DURATION[action] || 3600;
-          await cache.set(cacheKey, {
-            success: true,
-            data: responseData.data || responseData
-          }, duration);
+          if (action === "getVehicleData") {
+            await cache.set(cacheKey, {
+              success: true,
+              data: {
+                vehicles: responseData.data?.vehicles || []
+              }
+            }, duration);
+          } else {
+            await cache.set(cacheKey, {
+              success: true,
+              data: responseData.data || responseData
+            }, duration);
+          }
         }
         if (action.startsWith("get") && action.includes("Expenses")) {
           const expenses = responseData.data?.expenses || [];

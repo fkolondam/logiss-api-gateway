@@ -946,9 +946,9 @@ function getRangedInvoiceList(branch, date) {
       Logger.log('Total rows:', data.length)
       
       const vehicles = data
-        .filter(row => {
+      .filter(row => {
           Logger.log('Comparing branch:', row[0], 'with', branch)
-          return row[0] === branch
+          return row[0].toUpperCase() === branch.toUpperCase()
         })
         .map(row => ({
           licensePlate: row[1],

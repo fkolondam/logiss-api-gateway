@@ -1,5 +1,16 @@
 const NodeCache = require('node-cache');
 
+// Initialize cache with default settings
+const cache = new NodeCache({
+  stdTTL: 3600,     // Default TTL 1 hour
+  checkperiod: 600  // Check period 10 minutes
+});
+
+// Clear cache on server restart
+console.log('Server restarting - Clearing cache...');
+cache.flushAll();
+console.log('Cache cleared successfully');
+
 // TTL configurations (in seconds)
 const TTL_CONFIG = {
   branch: 86400,    // 24 hours
@@ -8,12 +19,6 @@ const TTL_CONFIG = {
   delivery: 1800,   // 30 minutes
   expenses: 1800    // 30 minutes
 };
-
-// Cache dengan default TTL 1 jam dan check period 10 menit
-const cache = new NodeCache({
-  stdTTL: 3600,     // Default TTL 1 hour
-  checkperiod: 600  // Check period 10 minutes
-});
 
 // Key generators untuk berbagai tipe data
 const getCacheKey = (type, params) => {
@@ -47,6 +52,12 @@ const cacheService = {
 
   del: (key) => {
     return cache.del(key);
+  },
+
+  // Clear all cache
+  clearAll: () => {
+    console.log('Clearing all cache...');
+    return cache.flushAll();
   },
 
   // Fungsi generik untuk get atau fetch data
@@ -97,12 +108,24 @@ const cacheService = {
   },
 
   getOrFetchVehicles: async (fetchGas, branch) => {
-    return cacheService.getOrFetchData(
-      'vehicle',
-      { branch },
-      fetchGas,
-      'getVehicleData'
-    );
+    const type = 'vehicle';
+    const cacheKey = getCacheKey(type, { branch });
+    const cachedData = cache.get(cacheKey);
+
+    if (cachedData) {
+      console.log(`Cache hit for vehicles: ${cacheKey}`);
+      return cachedData;
+    }
+
+    console.log(`Cache miss for vehicles: ${cacheKey}, fetching from GAS`);
+    const response = await fetchGas('getVehicleData', branch);
+
+    if (response.success) {
+      console.log(`Caching vehicles response for ${cacheKey}`);
+      cache.set(cacheKey, response, TTL_CONFIG[type]);
+    }
+
+    return response;
   },
 
   getOrFetchBranches: async (fetchGas) => {
