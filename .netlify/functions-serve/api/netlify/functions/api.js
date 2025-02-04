@@ -8204,12 +8204,31 @@ exports.handler = async (event) => {
           error: "Invalid or expired token"
         }, { origin: origin2 });
       }
+      const now = Math.floor(Date.now() / 1e3);
+      if (decoded.exp <= now) {
+        console.log("Auth Error: Token has expired");
+        return createResponse(401, {
+          success: false,
+          error: "Token has expired"
+        }, { origin: origin2 });
+      }
       console.log("Token verified successfully:", {
         email: decoded.email,
         role: decoded.role,
         branch: decoded.branch,
         expiresIn: new Date(decoded.exp * 1e3).toISOString()
       });
+      const requestBranch = params.branch || body?.data?.branch;
+      if (requestBranch && decoded.branch.toUpperCase() !== requestBranch.toUpperCase()) {
+        console.log("Auth Error: Branch mismatch", {
+          tokenBranch: decoded.branch,
+          requestBranch
+        });
+        return createResponse(403, {
+          success: false,
+          error: "Unauthorized access: Branch mismatch"
+        }, { origin: origin2 });
+      }
       if (body?.data) {
         body.data.username = decoded.email;
         console.log("Added username to request:", decoded.email);

@@ -76,12 +76,36 @@ exports.handler = async (event) => {
           error: 'Invalid or expired token'
         }, { origin })
       }
+
+      // Check if token is expired
+      const now = Math.floor(Date.now() / 1000)
+      if (decoded.exp <= now) {
+        console.log('Auth Error: Token has expired')
+        return createResponse(401, {
+          success: false,
+          error: 'Token has expired'
+        }, { origin })
+      }
+
       console.log('Token verified successfully:', {
         email: decoded.email,
         role: decoded.role,
         branch: decoded.branch,
         expiresIn: new Date(decoded.exp * 1000).toISOString()
       })
+
+      // Validate branch authorization
+      const requestBranch = params.branch || body?.data?.branch
+      if (requestBranch && decoded.branch.toUpperCase() !== requestBranch.toUpperCase()) {
+        console.log('Auth Error: Branch mismatch', {
+          tokenBranch: decoded.branch,
+          requestBranch: requestBranch
+        })
+        return createResponse(403, {
+          success: false,
+          error: 'Unauthorized access: Branch mismatch'
+        }, { origin })
+      }
 
       // Add username from token to request data
       if (body?.data) {
