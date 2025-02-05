@@ -95,18 +95,6 @@ function formatDate(date) {
   return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
 }
 
-// Helper function to format date string as M/D/YYYY HH:mm:ss without timezone conversion
-function formatDateWithTime(dateString) {
-  // Parse the date parts from the ISO string
-  const [datePart, timePart] = dateString.split('T');
-  const [year, month, day] = datePart.split('-');
-  const [hours, minutes, secondsWithZ] = timePart.split(':');
-  const seconds = secondsWithZ.replace('Z', '');
-  
-  // Format as M/D/YYYY HH:mm:ss
-  return `${parseInt(month)}/${parseInt(day)}/${year} ${hours}:${minutes}:${seconds}`;
-}
-
 // Web app endpoints
 function doGet(e) {
   // Validate API Key from URL parameter
@@ -136,7 +124,7 @@ function doGet(e) {
     case 'getDelivery':
       return getDelivery(getParam(e, 'id'))
     case 'getDeliveries':
-      return getDeliveries(getParam(e, 'branch'), getParam(e, 'range'))
+      return getDeliveries(getParam(e, 'branch'), getParam(e, 'range'));
     case 'getDeliveriesContext':
       return getDeliveriesContext({
         branch: getParam(e, 'branch'),
@@ -292,6 +280,31 @@ function handleCheckIn(data) {
 
       if (activeVehicle) {
         return sendError('Kendaraan sedang dalam perjalanan');
+      }
+
+      // Get branch coordinates for geofencing
+      const branchSheet = SpreadsheetApp.openById(BRANCH_SHEET_ID).getSheetByName('BRANCH')
+      const branchData = branchSheet.getDataRange().getValues()
+      const branch = branchData.find(row => row[1] === data.branch) // Branch
+
+      if (!branch) {
+        return sendError('Data cabang tidak ditemukan')
+      }
+       
+      // Validate geofencing
+      const geoCheck = isWithinGeofence(
+        data.location.latitude,
+        data.location.longitude,
+        branch[4], // latitude
+        branch[5], // longitude
+        true // isDev
+      )
+
+      if (!geoCheck.isWithin) {
+        return sendError('Lokasi terlalu jauh dari cabang', {
+          distance: geoCheck.distance,
+          maxAllowedDistance: geoCheck.maxAllowedDistance
+        })
       }
 
       // Upload odometer photo
@@ -946,9 +959,9 @@ function getRangedInvoiceList(branch, date) {
       Logger.log('Total rows:', data.length)
       
       const vehicles = data
-      .filter(row => {
+        .filter(row => {
           Logger.log('Comparing branch:', row[0], 'with', branch)
-          return row[0].toUpperCase() === branch.toUpperCase()
+          return row[0] === branch
         })
         .map(row => ({
           licensePlate: row[1],
@@ -1095,10 +1108,10 @@ function getRangedInvoiceList(branch, date) {
     sheet.getRange(userRow, 4).setValue(true) // Active status
     sheet.getRange(userRow, 6).setValue('') // Clear activation token
     
-  return sendResponse({
-    success: true,
-    message: 'Akun berhasil diaktivasi. Silakan login.'
-  })
+    return sendResponse({
+      success: true,
+      message: 'Akun berhasil diaktivasi. Silakan login.'
+    })
   }
   
   // Email Functions
@@ -1345,6 +1358,18 @@ function generateMapsUrl(latitude, longitude) {
   return `https://www.google.com/maps?q=${latitude},${longitude}`
 }
 
+// Helper function to format date string as M/D/YYYY HH:mm:ss without timezone conversion
+function formatDateWithTime(dateString) {
+  // Parse the date parts from the ISO string
+  const [datePart, timePart] = dateString.split('T');
+  const [year, month, day] = datePart.split('-');
+  const [hours, minutes, secondsWithZ] = timePart.split(':');
+  const seconds = secondsWithZ.replace('Z', '');
+  
+  // Format as M/D/YYYY HH:mm:ss
+  return `${parseInt(month)}/${parseInt(day)}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
 // Helper function to get driver's full name from session with caching
 const userCache = {};
 function getDriverFullName(username) {
@@ -1395,7 +1420,8 @@ function mapDeliveryRow(row) {
       raw: row[DeliveryCol.LOCATION]
     },
     deliveryPhotoUrl: row[DeliveryCol.DELIVERY_PHOTO],
-    paymentPhotoUrl: row[DeliveryCol.PAYMENT_PHOTO]
+    paymentPhotoUrl: row[DeliveryCol.PAYMENT_PHOTO],
+    inputer: row[DeliveryCol.INPUTER]
   }
 }
 
@@ -1414,7 +1440,7 @@ function submitDelivery(data) {
       return sendError('Metode pembayaran tidak valid. Pilihan yang tersedia: ' + Object.values(PAYMENT_TYPES).join(', '))
     }
 
-    // Generate delivery ID with current date in Jakarta timezone
+    // Generate delivery ID
     const deliveryDate = new Date()
     const jakartaDate = new Date(deliveryDate.getTime() + (7 * 60 * 60 * 1000)) // UTC+7 for Jakarta
     const deliveryId = generateDeliveryId(data.branch, jakartaDate)
@@ -1444,12 +1470,12 @@ function submitDelivery(data) {
       // Add delivery data
       const sheet = SpreadsheetApp.openById(DELIVERY_SHEET_ID).getSheetByName('Form Responses 1')
       sheet.appendRow([
-        Utilities.formatDate(deliveryDate, TIMEZONE, "yyyy-MM-dd HH:mm:ss"), // Current timestamp with timezone
+        Utilities.formatDate(deliveryDate, TIMEZONE, "yyyy-MM-dd HH:mm:ss"), // Timestamp with timezone
         data.branch,
-        getDriverFullName(data.username), // Get driver's full name
+        getDriverFullName(data.username),
         data.helperName,
         data.vehicleNumber,
-        formatDateWithTime(data.deliveryTime), // Format as M/D/YYYY HH:mm:ss without timezone conversion
+        formatDateWithTime(data.deliveryTime), // Use the input time directly
         data.storeName,
         data.storeAddress,
         data.invoiceNumber,
@@ -1641,69 +1667,103 @@ function getDeliveriesContext(data) {
 }
 
 function getAvailableInvoices(data) {
-    Logger.log('Received data for available invoices:', data);
-  try {
-    if (!data.branch || !data.date) {
-      return sendError('Branch dan date parameter diperlukan')
+    const startTime = new Date().getTime();
+    Logger.log(`Starting getAvailableInvoices for branch: ${data.branch}, date: ${data.date}`);
+
+    try {
+        if (!data.branch || !data.date) {
+            Logger.log('Missing required parameters');
+            return sendError('Parameter branch dan date diperlukan');
+        }
+
+        // Parse date parts
+        const dateParts = data.date.split('/');
+        if (dateParts.length !== 3) {
+            Logger.log('Invalid date format');
+            return sendError('Format tanggal tidak valid. Gunakan format m/d/yyyy');
+        }
+
+        const month = dateParts[0];
+        const day = dateParts[1];
+        const year = dateParts[2];
+
+        // Get delivery data - only needed columns (WAKTU PENGIRIMAN, NO FAKTUR, STATUS)
+        const deliverySheet = SpreadsheetApp.openById(DELIVERY_SHEET_ID).getSheetByName('Form Responses 1');
+        const deliveryRange = deliverySheet.getRange(2, DeliveryCol.DELIVERY_TIME + 1, deliverySheet.getLastRow() - 1, 3);
+        const deliveryData = deliveryRange.getValues();
+
+        // Create map of delivered invoices with their status
+        const deliveryMap = new Map();
+        for (const row of deliveryData) {
+            const deliveryTime = new Date(row[0]); // WAKTU PENGIRIMAN
+            const invoiceNumber = row[1];  // NO FAKTUR
+            const status = row[2];         // STATUS
+
+            // If range provided, check if delivery is within range
+            if (data.range) {
+                const [startDate, endDate] = data.range.split(',').map(d => new Date(d));
+                if (deliveryTime < startDate || deliveryTime > endDate) continue;
+            }
+
+            // Only store if status is not 'MINTA KIRIM ULANG'
+            if (status !== 'MINTA KIRIM ULANG') {
+                deliveryMap.set(invoiceNumber, true);
+            }
+        }
+
+        Logger.log(`Processed ${deliveryData.length} delivery records`);
+
+        // Get invoice data - only needed columns
+        const invoiceSheet = SpreadsheetApp.openById(INVOICE_SHEET_ID).getSheetByName('Sales Header');
+        const invoiceRange = invoiceSheet.getRange(2, 1, invoiceSheet.getLastRow() - 1, 14);
+        const invoiceData = invoiceRange.getValues();
+
+        // Process invoices
+        const invoices = [];
+        for (const row of invoiceData) {
+            // Early exit if not matching branch
+            if (row[3] !== data.branch) continue;
+            
+            // Convert to string for comparison
+            const rowYear = String(row[0]);
+            const rowMonth = String(row[1]);
+            const rowDay = String(row[2]);
+            
+            if (rowYear === year && rowMonth === month && rowDay === day) {
+                const invoiceNumber = row[13];
+                
+                // Only include if not delivered or needs redelivery
+                if (!deliveryMap.has(invoiceNumber)) {
+                    invoices.push({
+                        nomorInvoice: invoiceNumber,
+                        branchName: row[3],
+                        tanggalLengkap: `${month}/${day}/${year}`,
+                        namaCustomer: row[10],
+                        prinsipal: row[5]
+                    });
+                }
+            }
+        }
+
+        Logger.log(`Found ${invoices.length} available invoices`);
+        Logger.log(`Execution time: ${new Date().getTime() - startTime}ms`);
+
+        return sendResponse({
+            success: true,
+            data: {
+                invoices: invoices,
+                total: invoices.length,
+                branch: data.branch,
+                date: data.date
+            }
+        });
+
+    } catch (error) {
+        Logger.log(`Error in getAvailableInvoices: ${error}`);
+        return sendError('Terjadi kesalahan saat mengambil data invoice');
     }
-
-    // Get invoices from invoice sheet
-    const invoiceSheet = SpreadsheetApp.openById(INVOICE_SHEET_ID).getSheetByName('Sales Header')
-    const invoiceData = invoiceSheet.getDataRange().getValues()
-    const invoiceHeaders = invoiceData.shift()
-
-    // Get existing deliveries
-    const deliverySheet = SpreadsheetApp.openById(DELIVERY_SHEET_ID).getSheetByName('Form Responses 1')
-    const deliveryData = deliverySheet.getDataRange().getValues()
-    const deliveryHeaders = deliveryData.shift()
-
-    // Get all invoice numbers that are already in delivery
-    const existingInvoices = new Set(
-      deliveryData
-        .filter(row => 
-          row[DeliveryCol.STATUS] !== 'MINTA KIRIM ULANG' && 
-          row[DeliveryCol.BRANCH] === data.branch
-        )
-        .map(row => row[DeliveryCol.INVOICE_NUMBER])
-    )
-
-    Logger.log('Existing invoices:', existingInvoices);
-    Logger.log('Invoice data:', invoiceData);
-    let invoices = invoiceData
-      .filter(row => {
-        const invoiceNumber = row[0] // Assuming invoice number is first column
-        const invoiceBranch = row[1] // Assuming branch is second column
-        return (
-          invoiceBranch === data.branch && 
-          !existingInvoices.has(invoiceNumber)
-        )
-      })
-      .map(row => ({
-        invoiceNumber: row[0],
-        branch: row[1],
-        amount: parseFloat(row[2]),
-        date: row[3]
-      }))
-
-    // Apply date range filter if provided
-    if (data.range) {
-      const [startDate, endDate] = data.range.split(',').map(d => new Date(d))
-      invoices = invoices.filter(inv => {
-        const invoiceDate = new Date(inv.date)
-        return invoiceDate >= startDate && invoiceDate <= endDate
-      })
-    }
-
-    return sendResponse({
-      success: true,
-      data: { invoices }
-    })
-
-  } catch (error) {
-    console.error('Get available invoices error:', error)
-    return sendError('Terjadi kesalahan saat mengambil data invoice')
-  }
 }
+
 
 // Helper functions
 function cleanupUpload(url) {
