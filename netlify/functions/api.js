@@ -1,5 +1,5 @@
 const { fetchGas } = require('./utils/gas')
-const { verifyToken, getTokenFromRequest, generateToken } = require('./utils/auth')
+const { verifyToken, getTokenFromRequest, generateToken, blacklistToken, createAuthCookie } = require('./utils/auth')
 const { createResponse } = require('./utils/response')
 const cacheService = require('./utils/cache')
 
@@ -127,28 +127,90 @@ exports.handler = async (event) => {
         response = await fetchGas('activate', { token: params.token })
         break
 
-      case 'login':
-        if (!body?.data?.email || !body?.data?.hashedPassword) {
-          return createResponse(400, {
-            success: false,
-            error: 'Email dan password diperlukan'
-          }, { origin })
-        }
-        response = await fetchGas('login', body.data)
+    case 'login':
+      if (!body?.data?.email || !body?.data?.hashedPassword) {
+        return createResponse(400, {
+          success: false,
+          error: 'Email dan password diperlukan'
+        }, { origin })
+      }
+      response = await fetchGas('login', body.data)
+      
+      // If login successful, generate JWT token
+      if (response.success && response.data) {
+        const token = generateToken({
+          email: response.data.email,
+          fullName: response.data.fullName,
+          role: response.data.role,
+          branch: response.data.branch
+        })
         
-        // If login successful, generate JWT token
-        if (response.success && response.data) {
-          const token = generateToken({
-            email: response.data.email,
-            fullName: response.data.fullName,
-            role: response.data.role,
-            branch: response.data.branch
-          })
-          
-          // Add token to response data
-          response.data.token = token
-        }
-        break
+        // Add token to response data
+        response.data.token = token
+      }
+      break
+
+    case 'logout':
+      if (!body?.data?.email) {
+        return createResponse(400, {
+          success: false,
+          error: 'Email diperlukan'
+        }, { origin })
+      }
+
+      // Get token from request
+      const logoutToken = getTokenFromRequest(event)
+      if (!logoutToken) {
+        return createResponse(401, {
+          success: false,
+          error: 'Token tidak ditemukan'
+        }, { origin })
+      }
+
+      // Verify token
+      const decodedLogout = verifyToken(logoutToken)
+      if (!decodedLogout || decodedLogout.email !== body.data.email) {
+        return createResponse(401, {
+          success: false,
+          error: 'Token tidak valid'
+        }, { origin })
+      }
+
+      response = await fetchGas('logout', body.data)
+      
+      if (response.success) {
+        // Blacklist the token
+        blacklistToken(logoutToken)
+        
+        // Create logout cookie (will delete the existing cookie)
+        const logoutCookie = createAuthCookie(logoutToken, true)
+        
+        return createResponse(200, response, { 
+          origin,
+          cookie: logoutCookie
+        })
+      }
+      break
+
+    case 'forgot-password':
+      if (!body?.data?.email) {
+        return createResponse(400, {
+          success: false,
+          error: 'Email diperlukan'
+        }, { origin })
+      }
+      response = await fetchGas('forgotPassword', body.data)
+      break
+
+    case 'reset-password':
+      if (!body?.data?.token || !body?.data?.newPassword) {
+        return createResponse(400, {
+          success: false,
+          error: 'Token dan password baru diperlukan'
+        }, { origin })
+      }
+      response = await fetchGas('resetPassword', body.data)
+      break
 
       case 'register':
         if (!body?.data?.email || !body?.data?.hashedPassword || !body?.data?.fullName) {

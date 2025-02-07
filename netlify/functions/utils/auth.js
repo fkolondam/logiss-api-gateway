@@ -4,6 +4,9 @@ const cookie = require('cookie')
 const JWT_SECRET = process.env.JWT_SECRET
 const TOKEN_EXPIRY = '24h'
 
+// In-memory token blacklist (will be cleared on server restart)
+const tokenBlacklist = new Set()
+
 function generateToken(payload) {
   try {
     console.log('Generating token for payload:', {
@@ -20,6 +23,13 @@ function generateToken(payload) {
 function verifyToken(token) {
   try {
     console.log('Verifying token:', token.substring(0, 20) + '...')
+    
+    // Check if token is blacklisted
+    if (isTokenBlacklisted(token)) {
+      console.log('Token is blacklisted')
+      return null
+    }
+    
     const decoded = jwt.verify(token, JWT_SECRET)
     console.log('Token verified successfully:', {
       ...decoded,
@@ -68,20 +78,37 @@ function getTokenFromRequest(event) {
   }
 }
 
-function createAuthCookie(token) {
+function createAuthCookie(token, isLogout = false) {
   try {
-    console.log('Creating auth cookie for token:', token.substring(0, 20) + '...')
+    console.log(`Creating ${isLogout ? 'logout' : 'auth'} cookie for token:`, token.substring(0, 20) + '...')
     return cookie.serialize('token', token, {
       httpOnly: true,
       secure: true,
       sameSite: 'strict',
       path: '/',
-      maxAge: 86400 // 24 hours
+      maxAge: isLogout ? 0 : 86400 // 0 for logout (delete cookie), 24 hours otherwise
     })
   } catch (error) {
     console.error('Error creating auth cookie:', error)
     return null
   }
+}
+
+// Add token to blacklist
+function blacklistToken(token) {
+  try {
+    console.log('Blacklisting token:', token.substring(0, 20) + '...')
+    tokenBlacklist.add(token)
+    return true
+  } catch (error) {
+    console.error('Error blacklisting token:', error)
+    return false
+  }
+}
+
+// Check if token is blacklisted
+function isTokenBlacklisted(token) {
+  return tokenBlacklist.has(token)
 }
 
 // Helper function to extract user info from token
@@ -107,5 +134,7 @@ module.exports = {
   verifyToken,
   getTokenFromRequest,
   createAuthCookie,
-  getUserFromToken
+  getUserFromToken,
+  blacklistToken,
+  isTokenBlacklisted
 }

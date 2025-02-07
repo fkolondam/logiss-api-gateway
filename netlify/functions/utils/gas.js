@@ -11,7 +11,10 @@ const POST_ACTIONS = [
   'submitCheckIn',
   'submitCheckOut',
   'submitDelivery',
-  'submitExpenses'
+  'submitExpenses',
+  'logout',
+  'forgotPassword',
+  'resetPassword'
 ]
 
 // List of actions that use caching

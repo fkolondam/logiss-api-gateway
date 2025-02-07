@@ -96,6 +96,37 @@ function formatDate(date) {
 }
 
 // Web app endpoints
+
+function doPost(e) {
+  const data = getPostData(e)
+  const action = data.action
+
+  switch (action) {
+    case 'submitForm':
+      return submitForm(data.data)
+    case 'login':
+      return handleLogin(data.data)
+    case 'register':
+      return handleRegistration(data.data)
+    case 'submitCheckIn':
+      return handleCheckIn(data.data)
+    case 'submitCheckOut':
+      return handleCheckOut(data.data)
+    case 'submitExpenses':
+      return submitExpenses(data.data)
+    case 'submitDelivery':
+      return submitDelivery(data.data)
+    case 'logout':
+      return handleLogout(data.data)
+    case 'forgotPassword':
+      return handleForgotPassword(data.data)
+    case 'resetPassword':
+      return handleResetPassword(data.data)
+    default:
+      return sendError('Invalid action')
+  }
+}
+
 function doGet(e) {
   // Validate API Key from URL parameter
   const apiKey = getParam(e, 'key')
@@ -141,30 +172,8 @@ function doGet(e) {
       return activateAccount(getParam(e, 'token'))
     case 'getActiveSessions':
       return getActiveSessions(getParam(e, 'branch'))
-    default:
-      return sendError('Invalid action')
-  }
-}
-
-function doPost(e) {
-  const data = getPostData(e)
-  const action = data.action
-
-  switch (action) {
-    case 'submitForm':
-      return submitForm(data.data)
-    case 'login':
-      return handleLogin(data.data)
-    case 'register':
-      return handleRegistration(data.data)
-    case 'submitCheckIn':
-      return handleCheckIn(data.data)
-    case 'submitCheckOut':
-      return handleCheckOut(data.data)
-    case 'submitExpenses':
-      return submitExpenses(data.data)
-    case 'submitDelivery':
-      return submitDelivery(data.data)
+    case 'logout':
+      return handleLogout({ email: getParam(e, 'email') })
     default:
       return sendError('Invalid action')
   }
@@ -1019,12 +1028,12 @@ function getRangedInvoiceList(branch, date) {
     })
   }
   
-  // Authentication Handlers
-  function handleLogin(data) {
-    const spreadsheet = SpreadsheetApp.openById(USER_SHEET_ID)
-    const sheet = spreadsheet.getSheetByName('Users')
-    const users = sheet.getDataRange().getValues()
-    const headerRow = users.shift()
+// Authentication Handlers
+function handleLogin(data) {
+  const spreadsheet = SpreadsheetApp.openById(USER_SHEET_ID)
+  const sheet = spreadsheet.getSheetByName('Users')
+  const users = sheet.getDataRange().getValues()
+  const headerRow = users.shift()
     
     // Find user by email
     const user = users.find(row => row[0] === data.email)
@@ -1057,7 +1066,171 @@ function getRangedInvoiceList(branch, date) {
     })
   }
   
-  function handleRegistration(data) {
+function handleLogout(data) {
+  try {
+    if (!data.email) {
+      return sendError('Email diperlukan')
+    }
+
+    // Check if user has active check-in session
+    const sessionSheet = SpreadsheetApp.openById(SESSION_SHEET_ID).getSheetByName('SESSIONS')
+    const sessions = sessionSheet.getDataRange().getValues()
+    const activeSession = sessions.find(row => 
+      row[2] === data.email && // username/email
+      row[13] === 'Active' // status
+    )
+
+    if (activeSession) {
+      return sendError('Tidak dapat logout. Anda masih memiliki sesi check-in yang aktif.')
+    }
+
+    // Update last login time
+    const userSheet = SpreadsheetApp.openById(USER_SHEET_ID).getSheetByName('Users')
+    const users = userSheet.getDataRange().getValues()
+    const userIndex = users.findIndex(row => row[0] === data.email)
+    
+    if (userIndex === -1) {
+      return sendError('User tidak ditemukan')
+    }
+
+    // Update last login time (column 5)
+    const userRow = userIndex + 1
+    userSheet.getRange(userRow, 5).setValue(toJakartaTime(new Date()))
+
+    return sendResponse({
+      success: true,
+      message: 'Logout berhasil'
+    })
+
+  } catch (error) {
+    console.error('Logout error:', error)
+    return sendError('Terjadi kesalahan saat logout: ' + error.toString())
+  }
+}
+
+function handleForgotPassword(data) {
+  try {
+    if (!data.email) {
+      return sendError('Email diperlukan')
+    }
+
+    const sheet = SpreadsheetApp.openById(USER_SHEET_ID).getSheetByName('Users')
+    const users = sheet.getDataRange().getValues()
+    const headerRow = users.shift()
+
+    // Find user by email
+    const userIndex = users.findIndex(row => row[0] === data.email)
+    if (userIndex === -1) {
+      return sendError('Email tidak terdaftar')
+    }
+
+    const user = users[userIndex]
+    const resetToken = Utilities.getUuid()
+    const tokenExpiry = new Date()
+    tokenExpiry.setHours(tokenExpiry.getHours() + 1) // Token valid for 1 hour
+
+    // Update reset token and expiry (assuming columns 8 and 9 are for reset token and expiry)
+    const userRow = userIndex + 2
+    sheet.getRange(userRow, 8).setValue(resetToken)
+    sheet.getRange(userRow, 9).setValue(tokenExpiry)
+
+    // Send reset password email
+    sendResetPasswordEmail(data.email, user[2], resetToken) // user[2] is fullName
+
+    return sendResponse({
+      success: true,
+      message: 'Email reset password telah dikirim'
+    })
+
+  } catch (error) {
+    console.error('Forgot password error:', error)
+    return sendError('Terjadi kesalahan saat memproses permintaan reset password: ' + error.toString())
+  }
+}
+
+function handleResetPassword(data) {
+  try {
+    if (!data.token || !data.newPassword) {
+      return sendError('Token dan password baru diperlukan')
+    }
+
+    const sheet = SpreadsheetApp.openById(USER_SHEET_ID).getSheetByName('Users')
+    const users = sheet.getDataRange().getValues()
+    const headerRow = users.shift()
+
+    // Find user by reset token
+    const userIndex = users.findIndex(row => row[7] === data.token) // Assuming column 8 is reset token
+    if (userIndex === -1) {
+      return sendError('Token tidak valid')
+    }
+
+    const user = users[userIndex]
+    const tokenExpiry = new Date(user[8]) // Assuming column 9 is token expiry
+    const now = new Date()
+
+    if (now > tokenExpiry) {
+      return sendError('Token sudah kadaluarsa')
+    }
+
+    // Update password and clear reset token
+    const userRow = userIndex + 2
+    sheet.getRange(userRow, 2).setValue(data.newPassword) // Update password
+    sheet.getRange(userRow, 8).setValue('') // Clear reset token
+    sheet.getRange(userRow, 9).setValue('') // Clear token expiry
+
+    return sendResponse({
+      success: true,
+      message: 'Password berhasil diubah'
+    })
+
+  } catch (error) {
+    console.error('Reset password error:', error)
+    return sendError('Terjadi kesalahan saat reset password: ' + error.toString())
+  }
+}
+
+function sendResetPasswordEmail(email, name, token) {
+  const resetLink = `${APP_URL}auth/reset-password?token=${token}`
+  const subject = `Reset Password ${APP_NAME}`
+  
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1e3a8a;">Reset Password ${APP_NAME}</h2>
+      <p>Halo ${name},</p>
+      <p>Kami menerima permintaan untuk reset password akun Anda. Untuk melanjutkan, silakan klik tombol di bawah ini:</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${resetLink}" 
+           style="background-color: #1e3a8a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+          Reset Password
+        </a>
+      </div>
+      <p>Atau salin dan tempel link berikut di browser Anda:</p>
+      <p style="background-color: #f3f4f6; padding: 10px; word-break: break-all;">
+        ${resetLink}
+      </p>
+      <p>Link reset password ini akan kadaluarsa dalam 1 jam.</p>
+      <p>Jika Anda tidak meminta reset password, Anda dapat mengabaikan email ini.</p>
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+      <p style="color: #6b7280; font-size: 12px;">
+        Email ini dikirim secara otomatis, mohon tidak membalas email ini.
+      </p>
+    </div>
+  `
+  
+  try {
+    MailApp.sendEmail({
+      to: email,
+      subject: subject,
+      htmlBody: htmlBody
+    })
+    Logger.log(`Reset password email sent to ${email}`)
+  } catch (error) {
+    Logger.log(`Error sending reset password email to ${email}: ${error}`)
+    throw error
+  }
+}
+
+function handleRegistration(data) {
     const spreadsheet = SpreadsheetApp.openById(USER_SHEET_ID)
     const sheet = spreadsheet.getSheetByName('USERS')
     const users = sheet.getDataRange().getValues()
