@@ -154,6 +154,8 @@ function doGet(e) {
       return getFilteredExpenses(getParam(e, 'context'), getParam(e, 'range'));
     case 'getDelivery':
       return getDelivery(getParam(e, 'id'))
+    case 'getInvoice':
+        return getDelivery(getParam(e, 'invoiceNo'))
     case 'getDeliveries':
       return getDeliveries(getParam(e, 'branch'), getParam(e, 'range'));
     case 'getDeliveriesContext':
@@ -500,7 +502,58 @@ function getBranchConfig() {
   
   return sendResponse({ branches })
 }
-  
+
+// Get single invoice by invoice number
+function getInvoice(invoiceNo) {
+  try {
+    Logger.log(`Getting invoice data for invoice number: ${invoiceNo}`)
+
+    if (!invoiceNo) {
+      Logger.log('Missing required parameter: invoiceNo')
+      return sendError('Parameter invoice number diperlukan')
+    }
+
+    const spreadsheet = SpreadsheetApp.openById(INVOICE_SHEET_ID)
+    const sheet = spreadsheet.getSheetByName('Sales Header')
+    const data = sheet.getDataRange().getValues()
+    const headers = data.shift()
+
+    // Find invoice by invoice number (column 13)
+    const invoice = data.find(row => row[13] === invoiceNo)
+    
+    if (!invoice) {
+      Logger.log('Invoice not found')
+      return sendError('Invoice tidak ditemukan')
+    }
+
+    // Map invoice data to response format
+    const response = {
+      nomorInvoice: invoice[13],
+      tanggal: `${invoice[1]}/${invoice[2]}/${invoice[0]}`, // month/day/year
+      branchName: invoice[3],
+      prinsipal: invoice[5],
+      namaCustomer: invoice[10],
+      // Add more fields as needed
+      totalAmount: invoice[11],
+      status: invoice[12],
+      createdBy: invoice[14],
+      lastModified: invoice[15]
+    }
+
+    Logger.log('Invoice found:', response)
+
+    return sendResponse({
+      success: true,
+      data: response
+    })
+
+  } catch (error) {
+    Logger.log(`Error in getInvoice: ${error}`)
+    return sendError('Gagal mengambil data invoice: ' + error.toString())
+  }
+}
+
+
 // Invoice List
 function getInvoiceList(branch, date) {
   try {

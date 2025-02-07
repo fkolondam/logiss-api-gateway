@@ -4,7 +4,7 @@ const { createResponse } = require('./utils/response')
 const cacheService = require('./utils/cache')
 
 // Routes yang memerlukan authentication
-const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices', 'invoices']
+const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices', 'invoices', 'invoice']
 
 // Validasi file upload
 function validateFileUpload(data, fieldName) {
@@ -636,6 +636,31 @@ exports.handler = async (event) => {
             success: false,
             error: 'Invalid cache action'
           }, { origin })
+        }
+        break
+
+      case 'invoice':
+        if (!params.invoiceNo) {
+          return createResponse(400, {
+            success: false,
+            error: 'Parameter invoice number diperlukan'
+          }, { origin })
+        }
+
+        // Get invoice data
+        response = await fetchGas('getInvoice', { invoiceNo: params.invoiceNo })
+
+        // Validate branch access if invoice is found
+        if (response.success && response.data) {
+          const token = getTokenFromRequest(event)
+          const decoded = verifyToken(token)
+          
+          if (response.data.branchName.toUpperCase() !== decoded.branch.toUpperCase()) {
+            return createResponse(403, {
+              success: false,
+              error: 'Unauthorized access: Branch mismatch'
+            }, { origin })
+          }
         }
         break
 

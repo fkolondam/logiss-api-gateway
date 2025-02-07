@@ -27,7 +27,8 @@ const CACHED_ACTIONS = [
   'getDelivery',
   'getExpenses',
   'getFilteredExpenses',
-  'activate'
+  'activate',
+  'getInvoice'
 ]
 
 // Cache duration in seconds
@@ -40,7 +41,8 @@ const CACHE_DURATION = {
   getDelivery: 1800,             // 30 minutes
   getExpenses: 1800,             // 30 minutes
   getFilteredExpenses: 1800,     // 30 minutes
-  activate: 86400                // 24 hours since activation tokens don't change frequently
+  activate: 86400,               // 24 hours since activation tokens don't change frequently
+  getInvoice: 1800              // 30 minutes
 }
 
 // File upload configurations
