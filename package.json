@@ -3,8 +3,9 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
-        "dev": "netlify dev",
-        "build": "netlify build"
+        "dev": "cross-env NODE_ENV=development netlify dev",
+        "build:staging": "cross-env NODE_ENV=staging netlify build",
+        "build:prod": "cross-env NODE_ENV=production netlify build"
     },
     "dependencies": {
         "cookie": "^0.6.0",
@@ -13,6 +14,7 @@
         "node-fetch": "^2.7.0"
     },
     "devDependencies": {
+        "cross-env": "^7.0.3",
         "dotenv": "^16.3.1",
         "netlify-cli": "^17.10.1"
     }

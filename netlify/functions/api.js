@@ -1,7 +1,12 @@
 const { fetchGas } = require('./utils/gas')
 const { verifyToken, getTokenFromRequest, generateToken, blacklistToken, createAuthCookie } = require('./utils/auth')
-const { createResponse } = require('./utils/response')
+const { optimizedResponse } = require('./utils/optimizedResponse')
 const cacheService = require('./utils/cache')
+const config = require('./utils/config')
+const logger = require('./utils/logger')
+
+// Environment configuration
+const ENV = process.env.NODE_ENV || 'development'
 
 // Routes yang memerlukan authentication
 const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices', 'invoices', 'invoice']
@@ -27,7 +32,7 @@ function validateFileUpload(data, fieldName) {
 
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
-    return createResponse(204)
+    return optimizedResponse(204, null)
   }
 
   try {
@@ -37,31 +42,31 @@ exports.handler = async (event) => {
     const origin = event.headers.origin
 
     // Debug logging for request
-    console.log('=== Request Details ===')
-    console.log('Path:', path)
-    console.log('HTTP Method:', event.httpMethod)
-    console.log('Headers:', {
-      ...event.headers,
-      authorization: event.headers.authorization ? '[REDACTED]' : undefined
+    logger.debug('Request Details', {
+      path,
+      method: event.httpMethod,
+      headers: {
+        ...event.headers,
+        authorization: event.headers.authorization ? '[REDACTED]' : undefined
+      },
+      params,
+      body: body ? {
+        ...body,
+        data: body.data ? {
+          ...body.data,
+          hashedPassword: body.data.hashedPassword ? '[REDACTED]' : undefined
+        } : undefined
+      } : null
     })
-    console.log('Query Parameters:', params)
-    console.log('Request Body:', body ? {
-      ...body,
-      data: body.data ? {
-        ...body.data,
-        hashedPassword: body.data.hashedPassword ? '[REDACTED]' : undefined
-      } : undefined
-    } : null)
 
     // Validate authentication for protected routes
     if (PROTECTED_ROUTES.includes(path)) {
-      console.log('=== Auth Check for Protected Route ===')
-      console.log('Protected Route:', path)
+      logger.debug('Auth Check for Protected Route', { path })
       
       const token = getTokenFromRequest(event)
       if (!token) {
-        console.log('Auth Error: No token provided')
-        return createResponse(401, {
+        logger.warn('Auth Error: No token provided')
+        return optimizedResponse(401, {
           success: false,
           error: 'Authentication required'
         }, { origin })
@@ -70,8 +75,8 @@ exports.handler = async (event) => {
 
       const decoded = verifyToken(token)
       if (!decoded) {
-        console.log('Auth Error: Invalid or expired token')
-        return createResponse(401, {
+        logger.warn('Auth Error: Invalid or expired token')
+        return optimizedResponse(401, {
           success: false,
           error: 'Invalid or expired token'
         }, { origin })
@@ -80,14 +85,14 @@ exports.handler = async (event) => {
       // Check if token is expired
       const now = Math.floor(Date.now() / 1000)
       if (decoded.exp <= now) {
-        console.log('Auth Error: Token has expired')
-        return createResponse(401, {
+        logger.warn('Auth Error: Token has expired')
+        return optimizedResponse(401, {
           success: false,
           error: 'Token has expired'
         }, { origin })
       }
 
-      console.log('Token verified successfully:', {
+      logger.debug('Token verified successfully:', {
         email: decoded.email,
         role: decoded.role,
         branch: decoded.branch,
@@ -97,11 +102,11 @@ exports.handler = async (event) => {
       // Validate branch authorization
       const requestBranch = params.branch || body?.data?.branch
       if (requestBranch && decoded.branch.toUpperCase() !== requestBranch.toUpperCase()) {
-        console.log('Auth Error: Branch mismatch', {
+        logger.warn('Auth Error: Branch mismatch', {
           tokenBranch: decoded.branch,
           requestBranch: requestBranch
         })
-        return createResponse(403, {
+        return optimizedResponse(403, {
           success: false,
           error: 'Unauthorized access: Branch mismatch'
         }, { origin })
@@ -110,7 +115,7 @@ exports.handler = async (event) => {
       // Add username from token to request data
       if (body?.data) {
         body.data.username = decoded.email
-        console.log('Added username to request:', decoded.email)
+        logger.debug('Added username to request:', decoded.email)
       }
     }
 
@@ -118,18 +123,18 @@ exports.handler = async (event) => {
 
     switch (path) {
       case 'activate':
-        if (!params.token) {
-          return createResponse(400, {
-            success: false,
-            error: 'Token aktivasi diperlukan'
-          }, { origin })
-        }
+      if (!params.token) {
+        return optimizedResponse(400, {
+          success: false,
+          error: 'Token aktivasi diperlukan'
+        }, { origin })
+      }
         response = await fetchGas('activate', { token: params.token })
         break
 
     case 'login':
       if (!body?.data?.email || !body?.data?.hashedPassword) {
-        return createResponse(400, {
+        return optimizedResponse(400, {
           success: false,
           error: 'Email dan password diperlukan'
         }, { origin })
@@ -152,7 +157,7 @@ exports.handler = async (event) => {
 
     case 'logout':
       if (!body?.data?.email) {
-        return createResponse(400, {
+        return optimizedResponse(400, {
           success: false,
           error: 'Email diperlukan'
         }, { origin })
@@ -161,7 +166,7 @@ exports.handler = async (event) => {
       // Get token from request
       const logoutToken = getTokenFromRequest(event)
       if (!logoutToken) {
-        return createResponse(401, {
+        return optimizedResponse(401, {
           success: false,
           error: 'Token tidak ditemukan'
         }, { origin })
@@ -170,7 +175,7 @@ exports.handler = async (event) => {
       // Verify token
       const decodedLogout = verifyToken(logoutToken)
       if (!decodedLogout || decodedLogout.email !== body.data.email) {
-        return createResponse(401, {
+        return optimizedResponse(401, {
           success: false,
           error: 'Token tidak valid'
         }, { origin })
@@ -185,7 +190,7 @@ exports.handler = async (event) => {
         // Create logout cookie (will delete the existing cookie)
         const logoutCookie = createAuthCookie(logoutToken, true)
         
-        return createResponse(200, response, { 
+        return optimizedResponse(200, response, { 
           origin,
           cookie: logoutCookie
         })
@@ -194,7 +199,7 @@ exports.handler = async (event) => {
 
     case 'forgot-password':
       if (!body?.data?.email) {
-        return createResponse(400, {
+        return optimizedResponse(400, {
           success: false,
           error: 'Email diperlukan'
         }, { origin })
@@ -204,7 +209,7 @@ exports.handler = async (event) => {
 
     case 'reset-password':
       if (!body?.data?.token || !body?.data?.newPassword) {
-        return createResponse(400, {
+        return optimizedResponse(400, {
           success: false,
           error: 'Token dan password baru diperlukan'
         }, { origin })
@@ -214,7 +219,7 @@ exports.handler = async (event) => {
 
       case 'register':
         if (!body?.data?.email || !body?.data?.hashedPassword || !body?.data?.fullName) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Email, password, dan nama lengkap diperlukan'
           }, { origin })
@@ -224,7 +229,7 @@ exports.handler = async (event) => {
 
       case 'available-invoices':
         if (!params.branch || !params.date) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Branch dan date parameter diperlukan'
           }, { origin })
@@ -232,7 +237,7 @@ exports.handler = async (event) => {
 
         const dateObj = new Date(params.date)
         if (isNaN(dateObj.getTime())) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
           }, { origin })
@@ -268,7 +273,7 @@ exports.handler = async (event) => {
             // Handle get deliveries with context
             if (params.context) {
               if (!params.branch) {
-                return createResponse(400, {
+                return optimizedResponse(400, {
                   success: false,
                   error: 'Parameter branch diperlukan'
                 }, { origin })
@@ -284,7 +289,7 @@ exports.handler = async (event) => {
 
             // Handle get all deliveries
             if (!params.branch) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: 'Parameter branch diperlukan'
               }, { origin })
@@ -299,7 +304,7 @@ exports.handler = async (event) => {
 
           case 'POST':
             if (!body?.data) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: 'Data delivery diperlukan'
               }, { origin })
@@ -365,7 +370,7 @@ exports.handler = async (event) => {
 
               response = await fetchGas('submitDelivery', body.data)
             } catch (error) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: error.message
               }, { origin })
@@ -373,7 +378,7 @@ exports.handler = async (event) => {
             break
 
           default:
-            return createResponse(405, {
+            return optimizedResponse(405, {
               success: false,
               error: 'Method not allowed'
             }, { origin })
@@ -390,7 +395,7 @@ exports.handler = async (event) => {
               })
             } else {
               if (!params.branch) {
-                return createResponse(400, {
+                return optimizedResponse(400, {
                   success: false,
                   error: 'Parameter branch diperlukan'
                 }, { origin })
@@ -405,7 +410,7 @@ exports.handler = async (event) => {
 
           case 'POST':
             if (!body?.data) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: 'Data expenses diperlukan'
               }, { origin })
@@ -437,7 +442,7 @@ exports.handler = async (event) => {
 
               response = await fetchGas('submitExpenses', body.data)
             } catch (error) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: error.message
               }, { origin })
@@ -445,7 +450,7 @@ exports.handler = async (event) => {
             break
 
           default:
-            return createResponse(405, {
+            return optimizedResponse(405, {
               success: false,
               error: 'Method not allowed'
             }, { origin })
@@ -454,7 +459,7 @@ exports.handler = async (event) => {
 
       case 'checkin':
         if (!body?.data) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Data check-in diperlukan'
           }, { origin })
@@ -496,10 +501,10 @@ exports.handler = async (event) => {
           // Map specific error messages to status codes
           if (!response.success) {
             if (response.error?.includes('Kendaraan sedang dalam perjalanan')) {
-              return createResponse(400, response, { origin })
+              return optimizedResponse(400, response, { origin })
             }
             if (response.error?.includes('Lokasi terlalu jauh')) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: response.error,
                 data: response.data // Include distance info
@@ -507,7 +512,7 @@ exports.handler = async (event) => {
             }
           }
         } catch (error) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: error.message
           }, { origin })
@@ -516,7 +521,7 @@ exports.handler = async (event) => {
 
       case 'checkout':
         if (!body?.data) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Data check-out diperlukan'
           }, { origin })
@@ -558,16 +563,16 @@ exports.handler = async (event) => {
           // Map specific error messages to status codes
           if (!response.success) {
             if (response.error?.includes('Session tidak ditemukan')) {
-              return createResponse(404, response, { origin })
+              return optimizedResponse(404, response, { origin })
             }
             if (response.error?.includes('Session sudah selesai')) {
-              return createResponse(400, response, { origin })
+              return optimizedResponse(400, response, { origin })
             }
             if (response.error?.includes('Odometer akhir harus lebih besar')) {
-              return createResponse(400, response, { origin })
+              return optimizedResponse(400, response, { origin })
             }
             if (response.error?.includes('Lokasi terlalu jauh')) {
-              return createResponse(400, {
+              return optimizedResponse(400, {
                 success: false,
                 error: response.error,
                 data: response.data // Include distance info
@@ -575,7 +580,7 @@ exports.handler = async (event) => {
             }
           }
         } catch (error) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: error.message
           }, { origin })
@@ -588,7 +593,7 @@ exports.handler = async (event) => {
 
       case 'vehicles':
         if (!params.branch) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Branch parameter required'
           }, { origin })
@@ -598,7 +603,7 @@ exports.handler = async (event) => {
 
       case 'invoices':
         if (!params.branch || !params.date) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Branch dan date parameter diperlukan'
           }, { origin })
@@ -606,7 +611,7 @@ exports.handler = async (event) => {
 
         const invoiceDateObj = new Date(params.date)
         if (isNaN(invoiceDateObj.getTime())) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
           }, { origin })
@@ -632,7 +637,7 @@ exports.handler = async (event) => {
             data: cacheService.getStats()
           }
         } else {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Invalid cache action'
           }, { origin })
@@ -641,7 +646,7 @@ exports.handler = async (event) => {
 
       case 'invoice':
         if (!params.invoiceNo) {
-          return createResponse(400, {
+          return optimizedResponse(400, {
             success: false,
             error: 'Parameter invoice number diperlukan'
           }, { origin })
@@ -656,7 +661,7 @@ exports.handler = async (event) => {
           const decoded = verifyToken(token)
           
           if (response.data.branchName.toUpperCase() !== decoded.branch.toUpperCase()) {
-            return createResponse(403, {
+            return optimizedResponse(403, {
               success: false,
               error: 'Unauthorized access: Branch mismatch'
             }, { origin })
@@ -665,14 +670,13 @@ exports.handler = async (event) => {
         break
 
       default:
-        return createResponse(404, {
+        return optimizedResponse(404, {
           success: false,
           error: 'Not found'
         }, { origin })
     }
 
     // Debug logging for response
-    console.log('=== Response Details ===')
     if (!response?.success) {
       // Determine status code based on error message
       const statusCode = response?.error?.includes('tidak ditemukan') ? 404 :
@@ -683,27 +687,28 @@ exports.handler = async (event) => {
                         response?.error?.includes('terlalu jauh') ? 400 :
                         500
       
-      console.log('Error Response:', {
+      logger.warn('Error Response:', {
         statusCode,
         success: false,
         error: response?.error || 'Unknown error',
         data: response?.data
       })
-      return createResponse(statusCode, response, { origin })
+    return optimizedResponse(statusCode, response, { origin })
     }
 
-    console.log('Success Response:', {
+    logger.debug('Success Response:', {
       statusCode: 200,
       success: true,
       hasData: !!response?.data,
       dataType: response?.data ? typeof response.data : null
     })
-    return createResponse(200, response, { origin })
+    return optimizedResponse(200, response, { origin })
   } catch (error) {
-    console.error('API Error:', error)
-    return createResponse(500, {
+    logger.error('API Error:', error)
+    return optimizedResponse(500, {
       success: false,
-      error: error.message || 'Internal server error'
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { origin })
   }
 }

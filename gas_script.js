@@ -96,37 +96,6 @@ function formatDate(date) {
 }
 
 // Web app endpoints
-
-function doPost(e) {
-  const data = getPostData(e)
-  const action = data.action
-
-  switch (action) {
-    case 'submitForm':
-      return submitForm(data.data)
-    case 'login':
-      return handleLogin(data.data)
-    case 'register':
-      return handleRegistration(data.data)
-    case 'submitCheckIn':
-      return handleCheckIn(data.data)
-    case 'submitCheckOut':
-      return handleCheckOut(data.data)
-    case 'submitExpenses':
-      return submitExpenses(data.data)
-    case 'submitDelivery':
-      return submitDelivery(data.data)
-    case 'logout':
-      return handleLogout(data.data)
-    case 'forgotPassword':
-      return handleForgotPassword(data.data)
-    case 'resetPassword':
-      return handleResetPassword(data.data)
-    default:
-      return sendError('Invalid action')
-  }
-}
-
 function doGet(e) {
   // Validate API Key from URL parameter
   const apiKey = getParam(e, 'key')
@@ -155,7 +124,7 @@ function doGet(e) {
     case 'getDelivery':
       return getDelivery(getParam(e, 'id'))
     case 'getInvoice':
-        return getDelivery(getParam(e, 'invoiceNo'))
+      return getInvoice(getParam(e, 'invoiceNo'))
     case 'getDeliveries':
       return getDeliveries(getParam(e, 'branch'), getParam(e, 'range'));
     case 'getDeliveriesContext':
@@ -176,6 +145,36 @@ function doGet(e) {
       return getActiveSessions(getParam(e, 'branch'))
     case 'logout':
       return handleLogout({ email: getParam(e, 'email') })
+    default:
+      return sendError('Invalid action')
+  }
+}
+
+function doPost(e) {
+  const data = getPostData(e)
+  const action = data.action
+
+  switch (action) {
+    case 'submitForm':
+      return submitForm(data.data)
+    case 'login':
+      return handleLogin(data.data)
+    case 'register':
+      return handleRegistration(data.data)
+    case 'submitCheckIn':
+      return handleCheckIn(data.data)
+    case 'submitCheckOut':
+      return handleCheckOut(data.data)
+    case 'submitExpenses':
+      return submitExpenses(data.data)
+    case 'submitDelivery':
+      return submitDelivery(data.data)
+    case 'logout':
+      return handleLogout(data.data)
+    case 'forgotPassword':
+      return handleForgotPassword(data.data)
+    case 'resetPassword':
+      return handleResetPassword(data.data)
     default:
       return sendError('Invalid action')
   }
@@ -503,6 +502,7 @@ function getBranchConfig() {
   return sendResponse({ branches })
 }
 
+// Single Invoice
 // Get single invoice by invoice number
 function getInvoice(invoiceNo) {
   try {
@@ -552,7 +552,6 @@ function getInvoice(invoiceNo) {
     return sendError('Gagal mengambil data invoice: ' + error.toString())
   }
 }
-
 
 // Invoice List
 function getInvoiceList(branch, date) {
@@ -1081,12 +1080,12 @@ function getRangedInvoiceList(branch, date) {
     })
   }
   
-// Authentication Handlers
-function handleLogin(data) {
-  const spreadsheet = SpreadsheetApp.openById(USER_SHEET_ID)
-  const sheet = spreadsheet.getSheetByName('Users')
-  const users = sheet.getDataRange().getValues()
-  const headerRow = users.shift()
+  // Authentication Handlers
+  function handleLogin(data) {
+    const spreadsheet = SpreadsheetApp.openById(USER_SHEET_ID)
+    const sheet = spreadsheet.getSheetByName('Users')
+    const users = sheet.getDataRange().getValues()
+    const headerRow = users.shift()
     
     // Find user by email
     const user = users.find(row => row[0] === data.email)
@@ -1119,7 +1118,7 @@ function handleLogin(data) {
     })
   }
   
-function handleLogout(data) {
+  function handleLogout(data) {
   try {
     if (!data.email) {
       return sendError('Email diperlukan')
@@ -1182,10 +1181,10 @@ function handleForgotPassword(data) {
     const tokenExpiry = new Date()
     tokenExpiry.setHours(tokenExpiry.getHours() + 1) // Token valid for 1 hour
 
-    // Update reset token and expiry (assuming columns 8 and 9 are for reset token and expiry)
+    // Update reset token and expiry (assuming columns 10 and 11 are for reset token and expiry)
     const userRow = userIndex + 2
-    sheet.getRange(userRow, 8).setValue(resetToken)
-    sheet.getRange(userRow, 9).setValue(tokenExpiry)
+    sheet.getRange(userRow, 10).setValue(resetToken)
+    sheet.getRange(userRow, 11).setValue(tokenExpiry)
 
     // Send reset password email
     sendResetPasswordEmail(data.email, user[2], resetToken) // user[2] is fullName
@@ -1212,13 +1211,13 @@ function handleResetPassword(data) {
     const headerRow = users.shift()
 
     // Find user by reset token
-    const userIndex = users.findIndex(row => row[7] === data.token) // Assuming column 8 is reset token
+    const userIndex = users.findIndex(row => row[9] === data.token) // Assuming column 10 is reset token
     if (userIndex === -1) {
       return sendError('Token tidak valid')
     }
 
     const user = users[userIndex]
-    const tokenExpiry = new Date(user[8]) // Assuming column 9 is token expiry
+    const tokenExpiry = new Date(user[10]) // Assuming column 11 is token expiry
     const now = new Date()
 
     if (now > tokenExpiry) {
@@ -1228,8 +1227,8 @@ function handleResetPassword(data) {
     // Update password and clear reset token
     const userRow = userIndex + 2
     sheet.getRange(userRow, 2).setValue(data.newPassword) // Update password
-    sheet.getRange(userRow, 8).setValue('') // Clear reset token
-    sheet.getRange(userRow, 9).setValue('') // Clear token expiry
+    sheet.getRange(userRow, 10).setValue('') // Clear reset token
+    sheet.getRange(userRow, 11).setValue('') // Clear token expiry
 
     return sendResponse({
       success: true,
@@ -1283,7 +1282,7 @@ function sendResetPasswordEmail(email, name, token) {
   }
 }
 
-function handleRegistration(data) {
+  function handleRegistration(data) {
     const spreadsheet = SpreadsheetApp.openById(USER_SHEET_ID)
     const sheet = spreadsheet.getSheetByName('USERS')
     const users = sheet.getDataRange().getValues()

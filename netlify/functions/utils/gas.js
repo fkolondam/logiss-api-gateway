@@ -1,5 +1,6 @@
 const fetch = require('node-fetch')
 const cache = require('./cache')
+const logger = require('./logger')
 
 const GAS_URL = process.env.GAS_URL
 const GAS_API_KEY = process.env.GAS_API_KEY
@@ -31,18 +32,25 @@ const CACHED_ACTIONS = [
   'getInvoice'
 ]
 
-// Cache duration in seconds
+const config = require('./config')
+
+// Cache durations based on environment
 const CACHE_DURATION = {
-  getAvailableInvoices: 3600,    // 1 hour
-  getBranchConfig: 86400,        // 24 hours
-  getVehicleData: 43200,         // 12 hours
-  getDeliveries: 1800,           // 30 minutes
-  getDeliveriesContext: 1800,    // 30 minutes
-  getDelivery: 1800,             // 30 minutes
-  getExpenses: 1800,             // 30 minutes
-  getFilteredExpenses: 1800,     // 30 minutes
-  activate: 86400,               // 24 hours since activation tokens don't change frequently
-  getInvoice: 1800              // 30 minutes
+  getAvailableInvoices: config.cache.ttl,
+  getBranchConfig: config.cache.ttl * 24,      // 24x longer
+  getVehicleData: config.cache.ttl * 12,       // 12x longer
+  getDeliveries: config.cache.ttl / 2,         // Half the base TTL
+  getDeliveriesContext: config.cache.ttl / 2,  // Half the base TTL
+  getDelivery: config.cache.ttl / 2,           // Half the base TTL
+  getExpenses: config.cache.ttl / 2,           // Half the base TTL
+  getFilteredExpenses: config.cache.ttl / 2,   // Half the base TTL
+  activate: config.cache.ttl * 24,             // 24x longer
+  getInvoice: config.cache.ttl / 2             // Half the base TTL
+}
+
+// Get cache duration for an action
+const getCacheDuration = (action) => {
+  return CACHE_DURATION[action] || config.cache.ttl // Default to base TTL
 }
 
 // File upload configurations
@@ -58,12 +66,12 @@ const FILE_TYPES = {
 async function fetchGas(action, data = null) {
   try {
     if (!GAS_URL) {
-      console.error('GAS_URL is not configured')
+      logger.error('GAS_URL is not configured')
       throw new Error('GAS_URL is not configured')
     }
 
     if (!GAS_API_KEY) {
-      console.error('GAS_API_KEY is not configured')
+      logger.error('GAS_API_KEY is not configured')
       throw new Error('GAS_API_KEY is not configured')
     }
 
@@ -72,7 +80,7 @@ async function fetchGas(action, data = null) {
       const cacheKey = `${action}_${JSON.stringify(data)}`
       const cachedResponse = await cache.get(cacheKey)
       if (cachedResponse) {
-        console.log(`Cache hit for ${action}`)
+        logger.debug(`Cache hit for ${action}`)
         return cachedResponse
       }
     }
@@ -102,7 +110,7 @@ async function fetchGas(action, data = null) {
           const base64Data = data[field].replace(/^data:image\/(png|jpeg|jpg);base64,/, '')
           processedData[field] = base64Data
 
-          console.log(`Processing ${fileType}:`, {
+          logger.debug(`Processing ${fileType}:`, {
             hasPhoto: true,
             dataLength: base64Data.length,
             sampleStart: base64Data.substring(0, 50)
@@ -150,18 +158,25 @@ async function fetchGas(action, data = null) {
     }
     
     // Debug logs
-    console.log('=== GAS Request Details ===')
-    console.log('Action:', action)
-    console.log('Method:', options.method)
-    console.log('URL:', url.toString().replace(GAS_API_KEY, '[REDACTED]'))
     if (options.body) {
       const parsedBody = JSON.parse(options.body)
-      console.log('Request Body:', {
-        ...parsedBody,
-        data: parsedBody.data ? {
-          ...parsedBody.data,
-          hashedPassword: parsedBody.data.hashedPassword ? '[REDACTED]' : undefined
-        } : undefined
+      logger.debug('GAS Request Details', {
+        action,
+        method: options.method,
+        url: url.toString().replace(GAS_API_KEY, '[REDACTED]'),
+        body: {
+          ...parsedBody,
+          data: parsedBody.data ? {
+            ...parsedBody.data,
+            hashedPassword: parsedBody.data.hashedPassword ? '[REDACTED]' : undefined
+          } : undefined
+        }
+      })
+    } else {
+      logger.debug('GAS Request Details', {
+        action,
+        method: options.method,
+        url: url.toString().replace(GAS_API_KEY, '[REDACTED]')
       })
     }
 
@@ -169,16 +184,16 @@ async function fetchGas(action, data = null) {
     const responseText = await response.text()
     
     // Debug logs for response
-    console.log('=== GAS Response Details ===')
-    console.log('Status:', response.status)
-    console.log('Raw Response:', responseText.length > 1000 ? 
-      `${responseText.substring(0, 1000)}... [truncated]` : 
-      responseText
-    )
+    logger.debug('GAS Response Details', {
+      status: response.status,
+      rawResponse: responseText.length > 1000 ? 
+        `${responseText.substring(0, 1000)}... [truncated]` : 
+        responseText
+    })
 
     // Handle HTML error responses
     if (responseText.includes('<!DOCTYPE html>')) {
-      console.error('GAS returned HTML error:', responseText)
+      logger.error('GAS returned HTML error:', responseText)
       const errorMatch = responseText.match(/TypeError: (.+?)\(/);
       if (errorMatch) {
         throw new Error(errorMatch[1].trim());
@@ -191,19 +206,18 @@ async function fetchGas(action, data = null) {
     try {
       responseData = JSON.parse(responseText)
     } catch (parseError) {
-      console.error('Error parsing response:', parseError)
-      console.log('Raw response that failed to parse:', responseText)
+      logger.error('Error parsing response:', parseError)
+      logger.debug('Raw response that failed to parse:', responseText)
       throw new Error('Invalid JSON response from GAS')
     }
     
     // Debug logs for parsed response
-    console.log('=== GAS Parsed Response ===')
-    console.log('Success:', responseData.success)
-    console.log('Has Data:', !!responseData.data)
-    console.log('Has Message:', !!responseData.message)
-    if (!responseData.success) {
-      console.log('Error:', responseData.message || 'No error message')
-    }
+    logger.debug('GAS Parsed Response', {
+      success: responseData.success,
+      hasData: !!responseData.data,
+      hasMessage: !!responseData.message,
+      error: !responseData.success ? responseData.message || 'No error message' : undefined
+    })
 
     // Handle error responses
     if (responseData.success === false) {
@@ -217,8 +231,9 @@ async function fetchGas(action, data = null) {
 
     // For login responses, just pass through the data as-is
     if (action === 'login' && responseData.success) {
-      console.log('=== Login Response Analysis ===')
-      console.log('Raw response structure:', JSON.stringify(responseData, null, 2))
+      logger.debug('Login Response Analysis', {
+        rawResponse: responseData
+      })
 
       // The GAS script's handleLogin doesn't return a token, 
       // so we'll just pass through the data as-is
@@ -231,7 +246,7 @@ async function fetchGas(action, data = null) {
     // Cache successful GET responses
     if (!POST_ACTIONS.includes(action) && CACHED_ACTIONS.includes(action)) {
       const cacheKey = `${action}_${JSON.stringify(data)}`
-      const duration = CACHE_DURATION[action] || 3600 // Default 1 hour
+      const duration = getCacheDuration(action)
       
       // Special handling for vehicle data to ensure proper structure
       if (action === 'getVehicleData') {
@@ -305,7 +320,7 @@ async function fetchGas(action, data = null) {
       data: responseData.data || responseData
     }
   } catch (error) {
-    console.error(`GAS Error (${action}):`, error)
+    logger.error(`GAS Error (${action}):`, error)
     return {
       success: false,
       error: error.message || 'Internal server error'
