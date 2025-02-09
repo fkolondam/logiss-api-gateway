@@ -1,130 +1,101 @@
-# Dokumentasi API Gateway Logiss
+# API Documentation
 
-## Daftar Isi
-1. [Konfigurasi](#konfigurasi)
-2. [Autentikasi](#autentikasi)
-3. [Endpoint API](#endpoint-api)
-4. [Format Response](#format-response)
-5. [Error Handling](#error-handling)
-6. [Validasi](#validasi)
-7. [Geofencing](#geofencing)
-8. [Session Management](#session-management)
+## Base URL
+`/api`
 
-## Konfigurasi
-
-### Environment Variables
-```env
-GAS_URL=<Google Apps Script URL>
-GAS_API_KEY=<API Key>
-JWT_SECRET=<JWT Secret Key>
-ALLOWED_ORIGINS=<Comma separated allowed origins>
+## Authentication
+Most endpoints require authentication using JWT token. Include the token in the Authorization header:
+```
+Authorization: Bearer <token>
 ```
 
-### Google Apps Script Sheets
-- BRANCH_SHEET_ID: Konfigurasi cabang dan data sessions
-  - Sheet 'BRANCH': Data cabang
-  - Sheet 'Users': Data user dan status aktivasi
-  - Sheet 'SESSIONS': Data check-in/check-out
-- INVOICE_SHEET_ID: Data invoice
-  - Sheet 'Sales Header': Data invoice
-- VEHICLE_SHEET_ID: Data kendaraan
-  - Sheet 'LOGISTIC': Data kendaraan
-- USER_SHEET_ID: memiliki ID yang sama dengan BRANCH_SHEET_ID
+## Protected Routes
+The following routes require authentication and branch validation:
+- /checkin
+- /checkout
+- /delivery
+- /expenses
+- /available-invoices
+- /invoices
+- /invoice
 
-## Autentikasi
+For these routes, the token's branch must match the requested branch.
 
-### Flow Autentikasi
-1. Register -> Mendapat activation token
-2. Aktivasi -> Menggunakan token untuk aktivasi akun
-3. Login -> Mendapat JWT token
-4. Protected Routes -> Menggunakan JWT token
+## Error Responses
+All endpoints may return the following error responses:
 
-### JWT Token
-- Format: Bearer token
-- Expires: 24 jam
-- Payload:
-  ```json
-  {
-    "email": "string",
-    "fullName": "string",
-    "role": "string",
-    "branch": "string"
-  }
-  ```
-
-### Protected Routes
-Endpoint yang memerlukan autentikasi:
-- /api/checkin
-- /api/checkout
-- /api/delivery
-
-## Endpoint API
-
-### 1. Register
+```json
+{
+  "success": false,
+  "error": "Error message",
+  "stack": "Error stack trace (development only)"
+}
 ```
+
+Common HTTP Status Codes:
+- 200: Success
+- 204: No Content (for OPTIONS requests)
+- 400: Bad Request (validation errors, business logic errors)
+- 401: Unauthorized (missing or invalid token)
+- 403: Forbidden (branch mismatch)
+- 404: Not Found (resource not found)
+- 405: Method Not Allowed
+- 500: Internal Server Error
+
+## Endpoints
+
+### Authentication
+
+#### Register
+```http
 POST /api/register
 ```
-Request:
+Register a new user account.
+
+**Request Body:**
 ```json
 {
   "data": {
-    "email": "string",
-    "hashedPassword": "string (hashed di client)",
-    "fullName": "string",
-    "role": "string (Driver/Admin)",
-    "branch": "string (kode cabang)",
-    "activationToken": "string (UUID v4)"
+    "email": "string (required)",
+    "hashedPassword": "string (required)",
+    "fullName": "string (required)"
   }
 }
 ```
-Response Success (200):
+
+**Success Response:**
 ```json
 {
   "success": true,
-  "message": "Registrasi berhasil. Silakan cek email untuk aktivasi akun."
-}
-```
-Response Error (400):
-```json
-{
-  "success": false,
-  "message": "Email sudah terdaftar"
+  "data": {
+    "message": "Registration successful",
+    "activationLink": "string"
+  }
 }
 ```
 
-### 2. Aktivasi Akun
-```
-GET /api/activate?token={activation_token}
-```
-Response Success (200):
-```json
-{
-  "success": true,
-  "message": "Akun berhasil diaktivasi. Silakan login."
-}
-```
-Response Error (400):
-```json
-{
-  "success": false,
-  "message": "Token aktivasi tidak valid"
-}
-```
+**Error Cases:**
+- Missing required fields
+- Email already registered
+- Invalid email format
 
-### 3. Login
-```
+#### Login
+```http
 POST /api/login
 ```
-Request:
+Login to get authentication token.
+
+**Request Body:**
 ```json
 {
   "data": {
-    "email": "string",
-    "hashedPassword": "string (hashed di client)"
+    "email": "string (required)",
+    "hashedPassword": "string (required)"
   }
 }
 ```
-Response Success (200):
+
+**Success Response:**
 ```json
 {
   "success": true,
@@ -133,36 +104,543 @@ Response Success (200):
     "fullName": "string",
     "role": "string",
     "branch": "string",
-    "token": "string (JWT token)"
+    "token": "JWT token string"
   }
 }
 ```
-Response Error (400):
+
+**Error Cases:**
+- Missing credentials
+- Invalid credentials
+- Account not activated
+- Account locked
+
+#### Logout
+```http
+POST /api/logout
+```
+Logout and invalidate current token.
+
+**Request Body:**
 ```json
 {
-  "success": false,
-  "message": "Email atau password salah"
+  "data": {
+    "email": "string (required)"
+  }
 }
 ```
 
-### 4. Daftar Cabang
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Logout successful"
+  }
+}
 ```
+
+**Error Cases:**
+- Token not found
+- Invalid token
+- Email mismatch with token
+
+#### Activate Account
+```http
+GET /api/activate?token=<activation_token>
+```
+Activate a newly registered account.
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Account activated successfully"
+  }
+}
+```
+
+**Error Cases:**
+- Missing token
+- Invalid token
+- Token expired
+- Account already activated
+
+#### Forgot Password
+```http
+POST /api/forgot-password
+```
+Request password reset link.
+
+**Request Body:**
+```json
+{
+  "data": {
+    "email": "string (required)"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Password reset instructions sent",
+    "resetLink": "string"
+  }
+}
+```
+
+**Error Cases:**
+- Missing email
+- Email not found
+- Account not activated
+
+#### Reset Password
+```http
+POST /api/reset-password
+```
+Reset password using reset token.
+
+**Request Body:**
+```json
+{
+  "data": {
+    "token": "string (required)",
+    "newPassword": "string (required)"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Password reset successful"
+  }
+}
+```
+
+**Error Cases:**
+- Missing token or password
+- Invalid token
+- Token expired
+
+### Vehicle Operations
+
+#### Check-in
+```http
+POST /api/checkin
+```
+Check-in a vehicle at start of day/shift.
+
+**Request Body:**
+```json
+{
+  "data": {
+    "branch": "string (required)",
+    "vehicleNumber": "string (required)",
+    "checkInTime": "ISO8601 datetime (required)",
+    "initialOdometer": "number (required, positive)",
+    "checkInPhoto": "base64 image string (required)",
+    "location": {
+      "latitude": "number (required)",
+      "longitude": "number (required)"
+    }
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "sessionId": "string",
+    "message": "Check-in successful",
+    "checkInTime": "ISO8601 datetime",
+    "vehicleNumber": "string"
+  }
+}
+```
+
+**Error Cases:**
+- Missing required fields
+- Invalid odometer value (must be positive number)
+- Invalid check-in time
+- Invalid photo format
+- Invalid location format
+- Vehicle already checked in
+- Location too far from branch
+- Branch mismatch with token
+
+#### Check-out
+```http
+POST /api/checkout
+```
+Check-out a vehicle at end of day/shift.
+
+**Request Body:**
+```json
+{
+  "data": {
+    "sessionId": "string (required)",
+    "checkOutTime": "ISO8601 datetime (required)",
+    "finalOdometer": "number (required, > initial odometer)",
+    "checkOutPhoto": "base64 image string (required)",
+    "location": {
+      "latitude": "number (required)",
+      "longitude": "number (required)"
+    }
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "sessionId": "string",
+    "message": "Check-out successful",
+    "checkOutTime": "ISO8601 datetime",
+    "totalDistance": "number"
+  }
+}
+```
+
+**Error Cases:**
+- Missing required fields
+- Invalid odometer value
+- Invalid check-out time
+- Invalid photo format
+- Invalid location format
+- Session not found (404)
+- Session already completed
+- Final odometer less than initial
+- Location too far from branch
+
+### Delivery Management
+
+#### Get Deliveries
+```http
+GET /api/delivery?branch=<branch>&range=<range>
+```
+Get all deliveries for a branch.
+
+**Query Parameters:**
+- branch (required): Branch code
+- range (optional): Date range for filtering
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "string",
+        "branch": "string",
+        "helperName": "string",
+        "vehicleNumber": "string",
+        "deliveryTime": "ISO8601 datetime",
+        "storeName": "string",
+        "storeAddress": "string",
+        "invoiceNumber": "string",
+        "invoiceAmount": "number",
+        "paymentType": "string",
+        "status": "string",
+        "location": {
+          "latitude": "number",
+          "longitude": "number"
+        }
+      }
+    ],
+    "total": "number",
+    "page": "number",
+    "pageSize": "number"
+  }
+}
+```
+
+#### Get Delivery by ID
+```http
+GET /api/delivery?id=<delivery_id>
+```
+Get specific delivery details.
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "string",
+    "branch": "string",
+    "helperName": "string",
+    "vehicleNumber": "string",
+    "deliveryTime": "ISO8601 datetime",
+    "storeName": "string",
+    "storeAddress": "string",
+    "invoiceNumber": "string",
+    "invoiceAmount": "number",
+    "paymentType": "string",
+    "status": "string",
+    "deliveryCheckinPhoto": "string (URL)",
+    "deliveryPhoto": "string (URL)",
+    "paymentPhoto": "string (URL)",
+    "location": {
+      "latitude": "number",
+      "longitude": "number"
+    }
+  }
+}
+```
+
+#### Get Deliveries by Context
+```http
+GET /api/delivery?context=<context>&branch=<branch>&range=<range>
+```
+Get deliveries filtered by context.
+
+**Query Parameters:**
+- context (required): Filter context
+- branch (required): Branch code
+- range (optional): Date range
+
+#### Submit Delivery
+```http
+POST /api/delivery
+```
+Submit a new delivery record.
+
+**Request Body:**
+```json
+{
+  "data": {
+    "branch": "string (required)",
+    "helperName": "string (required)",
+    "vehicleNumber": "string (required)",
+    "deliveryTime": "ISO8601 datetime (required)",
+    "storeName": "string (required)",
+    "storeAddress": "string (required)",
+    "invoiceNumber": "string (required)",
+    "invoiceAmount": "number (required, positive)",
+    "paymentType": "enum (TUNAI|TRANSFER|CEK/GIRO|TANDA TERIMA FAKTUR) (required)",
+    "deliveryCheckinPhoto": "base64 image string (required)",
+    "deliveryPhoto": "base64 image string (optional)",
+    "paymentPhoto": "base64 image string (optional)",
+    "location": {
+      "latitude": "number (required)",
+      "longitude": "number (required)"
+    }
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "string",
+    "message": "Delivery submitted successfully",
+    "deliveryTime": "ISO8601 datetime"
+  }
+}
+```
+
+**Error Cases:**
+- Missing required fields
+- Invalid delivery time
+- Invalid invoice amount (must be positive)
+- Invalid payment type
+- Invalid photo format
+- Invalid location format
+- Branch mismatch with token
+- Invoice already delivered
+- Location too far from store
+
+### Expenses Management
+
+#### Get Expenses
+```http
+GET /api/expenses?branch=<branch>&category=<category>&range=<range>
+```
+Get expenses for a branch.
+
+**Query Parameters:**
+- branch (required): Branch code
+- category (optional): Expense category
+- range (optional): Date range
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "expenses": [
+      {
+        "id": "string",
+        "date": "YYYY-MM-DD",
+        "branch": "string",
+        "licensePlate": "string",
+        "category": "string",
+        "subcategory": "string",
+        "amount": "number",
+        "receiptPhoto": "string (URL)"
+      }
+    ],
+    "total": "number",
+    "totalAmount": "number"
+  }
+}
+```
+
+#### Get Expenses by Context
+```http
+GET /api/expenses?context=<context>&range=<range>
+```
+Get expenses filtered by context.
+
+#### Submit Expense
+```http
+POST /api/expenses
+```
+Submit a new expense record.
+
+**Request Body:**
+```json
+{
+  "data": {
+    "date": "YYYY-MM-DD (required)",
+    "branch": "string (required)",
+    "licensePlate": "string (required)",
+    "category": "string (required)",
+    "subcategory": "string (required)",
+    "amount": "number (required, positive)",
+    "receiptPhoto": "base64 image string (optional)"
+  }
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "string",
+    "message": "Expense recorded successfully"
+  }
+}
+```
+
+**Error Cases:**
+- Missing required fields
+- Invalid date format
+- Invalid amount (must be positive)
+- Invalid photo format
+- Branch mismatch with token
+
+### Invoice Management
+
+#### Get Available Invoices
+```http
+GET /api/available-invoices?branch=<branch>&date=<YYYY-MM-DD>&range=<range>
+```
+Get list of available invoices.
+
+**Query Parameters:**
+- branch (required): Branch code
+- date (required): Date in YYYY-MM-DD format
+- range (optional): Date range
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invoices": [
+      {
+        "invoiceNumber": "string",
+        "customerName": "string",
+        "amount": "number",
+        "status": "string",
+        "dueDate": "YYYY-MM-DD"
+      }
+    ],
+    "total": "number",
+    "totalAmount": "number"
+  }
+}
+```
+
+#### Get Invoices
+```http
+GET /api/invoices?branch=<branch>&date=<YYYY-MM-DD>&ranged=<boolean>
+```
+Get invoices for a branch.
+
+**Query Parameters:**
+- branch (required): Branch code
+- date (required): Date in YYYY-MM-DD format
+- ranged (optional): Boolean to include date range
+
+#### Get Invoice Details
+```http
+GET /api/invoice?invoiceNo=<invoice_number>
+```
+Get specific invoice details.
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invoiceNumber": "string",
+    "customerName": "string",
+    "customerAddress": "string",
+    "amount": "number",
+    "status": "string",
+    "issueDate": "YYYY-MM-DD",
+    "dueDate": "YYYY-MM-DD",
+    "items": [
+      {
+        "productCode": "string",
+        "description": "string",
+        "quantity": "number",
+        "unitPrice": "number",
+        "total": "number"
+      }
+    ],
+    "branchName": "string"
+  }
+}
+```
+
+### Reference Data
+
+#### Get Branches
+```http
 GET /api/branches
 ```
-Response Success (200):
+Get list of all branches.
+
+**Success Response:**
 ```json
 {
   "success": true,
   "data": {
     "branches": [
       {
-        "branchId": "string",
-        "branchName": "string",
-        "region": "string",
+        "code": "string",
+        "name": "string",
         "address": "string",
-        "coordinates": {
-          "lat": "number",
-          "long": "number"
+        "location": {
+          "latitude": "number",
+          "longitude": "number"
         }
       }
     ]
@@ -170,11 +648,16 @@ Response Success (200):
 }
 ```
 
-### 5. Daftar Kendaraan
+#### Get Vehicles
+```http
+GET /api/vehicles?branch=<branch>
 ```
-GET /api/vehicles?branch={branch_code}
-```
-Response Success (200):
+Get list of vehicles for a branch.
+
+**Query Parameters:**
+- branch (required): Branch code
+
+**Success Response:**
 ```json
 {
   "success": true,
@@ -182,311 +665,97 @@ Response Success (200):
     "vehicles": [
       {
         "licensePlate": "string",
-        "vehicleName": "string",
-        "vehicleCategory": "string"
+        "type": "string",
+        "status": "string",
+        "branch": "string"
       }
     ]
   }
 }
 ```
 
-### 6. Check-in Kendaraan
+### Cache Management
+
+#### Get Cache Stats
+```http
+GET /api/cache?action=stats
 ```
-POST /api/checkin
-```
-Headers:
-```
-Authorization: Bearer {jwt_token}
-```
-Request:
-```json
-{
-  "data": {
-    "branch": "string",
-    "vehicleNumber": "string",
-    "checkInTime": "string (ISO 8601 UTC)",
-    "initialOdometer": "number",
-    "checkInPhotoUrl": "string",
-    "location": {
-      "latitude": "number",
-      "longitude": "number"
-    }
-  }
-}
-```
-Response Success (200):
+Get cache statistics.
+
+**Success Response:**
 ```json
 {
   "success": true,
   "data": {
-    "sessionId": "string",
-    "message": "Check-in berhasil",
-    "timestamp": "string (ISO 8601 UTC)"
-  }
-}
-```
-Response Error (400):
-```json
-{
-  "success": false,
-  "message": "Kendaraan sedang digunakan",
-  "details": {
-    "currentSession": {
-      "sessionId": "string",
-      "username": "string",
-      "checkInTime": "string"
-    }
+    "hits": "number",
+    "misses": "number",
+    "keys": "number",
+    "ksize": "number",
+    "vsize": "number"
   }
 }
 ```
 
-### 7. Check-out Kendaraan
-```
-POST /api/checkout
-```
-Headers:
-```
-Authorization: Bearer {jwt_token}
-```
-Request:
+## Technical Details
+
+### File Upload Guidelines
+- Images must be provided as base64 strings with data URL format
+- Format: `data:image/jpeg;base64,...` or `data:image/png;base64,...`
+- Supported image formats: JPEG, PNG
+- Base64 data must be valid and complete
+- Maximum file size: 5MB
+
+### Location Data Format
+Location data must be provided in the following format:
 ```json
 {
-  "data": {
-    "sessionId": "string",
-    "checkOutTime": "string (ISO 8601 UTC)",
-    "finalOdometer": "number",
-    "checkOutPhotoUrl": "string",
-    "location": {
-      "latitude": "number",
-      "longitude": "number"
-    }
-  }
-}
-```
-Response Success (200):
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Check-out berhasil",
-    "sessionId": "string",
-    "distanceTraveled": "number",
-    "checkOutTime": "string (ISO 8601 UTC)"
-  }
+  "latitude": "number (required, -90 to 90)",
+  "longitude": "number (required, -180 to 180)"
 }
 ```
 
-### 8. Daftar Invoice
-```
-GET /api/invoices?branch={branch_code}
-```
-Response Success (200):
-```json
-{
-  "success": true,
-  "data": {
-    "invoices": [
-      {
-        "branchName": "string",
-        "tanggalLengkap": "string",
-        "nomorInvoice": "string",
-        "namaCustomer": "string"
-      }
-    ]
-  }
-}
-```
+### Date and Time Format
+- Dates must be provided in `YYYY-MM-DD` format
+- Timestamps must be provided in ISO8601 format
+- All times are in Asia/Jakarta timezone (UTC+7)
+- Date ranges can be specified as:
+  - today
+  - yesterday
+  - thisWeek
+  - lastWeek
+  - thisMonth
+  - lastMonth
+  - custom (requires start and end dates)
 
-## Format Response
+### Rate Limiting
+The API implements rate limiting with the following defaults:
+- Window: 15 minutes (900,000 ms)
+- Max requests per window: 100
+- Rate limit headers included in response:
+  - X-RateLimit-Limit
+  - X-RateLimit-Remaining
+  - X-RateLimit-Reset
 
-### Success Response
-```json
-{
-  "success": true,
-  "data": {
-    // Response data
-  }
-}
-```
-atau
-```json
-{
-  "success": true,
-  "message": "string"
-}
-```
+### Caching
+The API implements caching with environment-specific TTLs:
+- Development: 30 minutes (1800 seconds)
+- Staging: 1 hour (3600 seconds)
+- Production: 2 hours (7200 seconds)
 
-### Error Response
-```json
-{
-  "success": false,
-  "message": "string",
-  "details": {
-    // Optional error details
-  }
-}
-```
+Cached endpoints:
+- /branches
+- /vehicles
+- /available-invoices
+- /invoices
+- /delivery (GET requests)
+- /expenses (GET requests)
 
-## Error Handling
-
-### HTTP Status Codes
-- 200: Success
-- 204: No Content (OPTIONS request)
-- 400: Bad Request
-- 401: Unauthorized
-- 404: Not Found
-- 500: Internal Server Error
-
-### Common Error Messages
-1. Authentication:
-   - "Authentication required"
-   - "Invalid or expired token"
-   - "Token aktivasi tidak valid"
-
-2. Validation:
-   - "Data tidak lengkap"
-   - "Email sudah terdaftar"
-   - "Email atau password salah"
-
-3. Business Logic:
-   - "Kendaraan sedang digunakan"
-   - "Session tidak ditemukan"
-   - "Session sudah selesai"
-   - "Lokasi terlalu jauh dari cabang"
-
-## Validasi
-
-### Register
-1. Email:
-   - Format email valid
-   - Belum terdaftar
-2. Password:
-   - Harus di-hash di client
-3. Role:
-   - "Driver" atau "Admin"
-4. Branch:
-   - Kode cabang harus valid
-5. Activation Token:
-   - Format UUID v4
-
-### Login
-1. Email:
-   - Harus terdaftar
-   - Akun harus sudah diaktivasi
-2. Password:
-   - Hash harus cocok
-
-### Check-in
-1. Location:
-   - Dalam radius yang diizinkan dari cabang
-2. Vehicle:
-   - Tidak sedang digunakan
-3. Time:
-   - Format ISO 8601 UTC
-
-### Check-out
-1. Session:
-   - Harus active
-   - User harus sama dengan yang check-in
-2. Odometer:
-   - Final > Initial
-3. Location:
-   - Dalam radius yang diizinkan
-
-## Geofencing
-
-### Radius
-- Development: 10 kilometer
-- Production: 100 meter
-
-### Validasi
-```javascript
-const distance = calculateDistance(userLat, userLon, branchLat, branchLon)
-const maxDistance = isDev ? 10000 : 100 // meters
-return distance <= maxDistance
-```
-
-## Session Management
-
-### Status Session
-- Active: Check-in berhasil, belum check-out
-- Completed: Sudah check-out
-
-### Validasi Session
-1. Satu kendaraan hanya bisa memiliki satu session active
-2. Session harus di-complete sebelum kendaraan bisa di-check-in lagi
-3. Hanya user yang check-in yang bisa check-out
-4. Validasi berdasarkan tanggal (UTC)
-
-### Data Session
-```javascript
-{
-  sessionId: "UUID v4",
-  timestamp: "ISO 8601 UTC",
-  username: "string",
-  branch: "string",
-  vehicleNumber: "string",
-  checkInTime: "ISO 8601 UTC",
-  checkOutTime: "ISO 8601 UTC",
-  initialOdometer: "number",
-  finalOdometer: "number",
-  checkInPhotoUrl: "string",
-  checkOutPhotoUrl: "string",
-  status: "Active|Completed"
-}
-```
-
-### Struktur Sheet
-#### Sheet 'BRANCH'
-| Kolom | Tipe | Deskripsi |
-|-------|------|-----------|
-| Branch ID | String | Kode unik cabang |
-| Branch Name | String | Nama cabang |
-| Region | String | Wilayah cabang |
-| Address | String | Alamat lengkap |
-| Latitude | Number | Koordinat latitude |
-| Longitude | Number | Koordinat longitude |
-
-#### Sheet 'Users'
-| Kolom | Tipe | Deskripsi |
-|-------|------|-----------|
-| Email | String | Email user (unique) |
-| Password | String | Password yang sudah di-hash |
-| Full Name | String | Nama lengkap |
-| Active | Boolean | Status aktivasi |
-| Last Login | DateTime | Waktu login terakhir |
-| Activation Token | String | Token aktivasi (UUID) |
-| Role | String | Driver/Admin |
-| Branch | String | Kode cabang |
-
-#### Sheet 'SESSIONS'
-| Kolom | Tipe | Deskripsi |
-|-------|------|-----------|
-| Session ID | String | UUID v4 |
-| Timestamp | DateTime | Waktu record dibuat |
-| Username | String | Email user |
-| Branch | String | Kode cabang |
-| Vehicle Number | String | Nomor polisi |
-| Check In Time | DateTime | Waktu check-in |
-| Check Out Time | DateTime | Waktu check-out |
-| Initial Odometer | Number | Odometer awal |
-| Final Odometer | Number | Odometer akhir |
-| Check In Photo URL | String | URL foto check-in |
-| Check Out Photo URL | String | URL foto check-out |
-| Status | String | Active/Completed |
-
-#### Sheet 'LOGISTIC'
-| Kolom | Tipe | Deskripsi |
-|-------|------|-----------|
-| Branch | String | Kode cabang |
-| License Plate | String | Nomor polisi |
-| Vehicle Name | String | Nama kendaraan |
-| Vehicle Category | String | Kategori kendaraan |
-
-#### Sheet 'Sales Header'
-| Kolom | Tipe | Deskripsi |
-|-------|------|-----------|
-| Branch Name | String | Nama cabang |
-| Tanggal Lengkap | DateTime | Tanggal invoice |
-| Nomor Invoice | String | Nomor invoice |
-| Nama Customer | String | Nama pelanggan |
+### Security
+- All endpoints use HTTPS
+- JWT tokens expire after 24 hours
+- Passwords must be hashed before sending
+- CORS enabled for specified origins
+- Branch-level access control
+- Request/Response logging (configurable per environment)
+- Input validation and sanitization
+- Rate limiting per IP
