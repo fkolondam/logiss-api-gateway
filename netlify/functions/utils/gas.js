@@ -36,16 +36,16 @@ const config = require('./config')
 
 // Cache durations based on environment
 const CACHE_DURATION = {
-  getAvailableInvoices: config.cache.ttl,
-  getBranchConfig: config.cache.ttl * 24,      // 24x longer
-  getVehicleData: config.cache.ttl * 12,       // 12x longer
-  getDeliveries: config.cache.ttl / 2,         // Half the base TTL
-  getDeliveriesContext: config.cache.ttl / 2,  // Half the base TTL
-  getDelivery: config.cache.ttl / 2,           // Half the base TTL
-  getExpenses: config.cache.ttl / 2,           // Half the base TTL
-  getFilteredExpenses: config.cache.ttl / 2,   // Half the base TTL
-  activate: config.cache.ttl * 24,             // 24x longer
-  getInvoice: config.cache.ttl / 2             // Half the base TTL
+  getAvailableInvoices: 900,    // 15 minutes
+  getBranchConfig: 3600,        // 1 hour
+  getVehicleData: 1800,         // 30 minutes
+  getDeliveries: 600,           // 10 minutes
+  getDeliveriesContext: 600,    // 10 minutes
+  getDelivery: 600,             // 10 minutes
+  getExpenses: 600,             // 10 minutes
+  getFilteredExpenses: 600,     // 10 minutes
+  activate: 3600,               // 1 hour
+  getInvoice: 600              // 10 minutes
 }
 
 // Get cache duration for an action
@@ -88,12 +88,13 @@ async function fetchGas(action, data = null) {
     const url = new URL(GAS_URL)
     const isPostAction = POST_ACTIONS.includes(action)
 
-    // Setup request options
+    // Setup request options with timeout
     const options = {
       method: isPostAction ? 'POST' : 'GET',
       headers: {
         'Content-Type': 'application/json'
-      }
+      },
+      timeout: 25000 // 25 seconds timeout
     }
 
     // Add API key to all requests
@@ -180,7 +181,17 @@ async function fetchGas(action, data = null) {
       })
     }
 
-    const response = await fetch(url.toString(), options)
+    // Add timeout promise
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Request timeout')), 25000)
+    );
+
+    // Race between fetch and timeout
+    const response = await Promise.race([
+      fetch(url.toString(), options),
+      timeout
+    ]);
+
     const responseText = await response.text()
     
     // Debug logs for response
