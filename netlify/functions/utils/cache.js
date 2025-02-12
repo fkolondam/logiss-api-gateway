@@ -13,11 +13,11 @@ console.log('Cache cleared successfully');
 
 // TTL configurations (in seconds)
 const TTL_CONFIG = {
-  branch: 3600,     // 1 hour
-  vehicle: 1800,    // 30 minutes
-  invoice: 900,     // 15 minutes
-  delivery: 600,    // 10 minutes
-  expenses: 600     // 10 minutes
+  branch: 86400,    // 24 hours
+  vehicle: 43200,   // 12 hours
+  invoice: 3600,    // 1 hour
+  delivery: 1800,   // 30 minutes
+  expenses: 1800    // 30 minutes
 };
 
 // Key generators untuk berbagai tipe data

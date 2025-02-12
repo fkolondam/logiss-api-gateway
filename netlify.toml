@@ -4,9 +4,11 @@
 [functions]
   node_bundler = "esbuild"
   included_files = ["utils/**"]
+  
+  [functions.timeout]
+  # Add timeout setting for functions (in seconds)
   external_node_modules = ["node-cache"]
-  # Set timeout to 30 seconds (maximum allowed by Netlify)
-  timeout = "30"
+  duration = 60
 
 [dev]
   framework = "#static"
@@ -30,4 +32,3 @@
     Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
     Access-Control-Allow-Headers = "Origin, X-Requested-With, Content-Type, Accept, Authorization"
     Access-Control-Allow-Credentials = "true"
-    Vary = "Origin"
