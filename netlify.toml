@@ -17,6 +17,7 @@
   publish = "public"
   # Setup a netlify.toml file with a [dev] section to specify your dev server settings.
   # See docs at: https://docs.netlify.com/cli/local-development/#project-detection
+  # test
 
 [[redirects]]
   from = "/api/*"
