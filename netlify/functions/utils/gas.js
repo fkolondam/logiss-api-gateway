@@ -29,7 +29,8 @@ const CACHED_ACTIONS = [
   'getExpenses',
   'getFilteredExpenses',
   'activate',
-  'getInvoice'
+  'getInvoice',
+  'getPackingList'
 ]
 
 const config = require('./config')
@@ -45,7 +46,8 @@ const CACHE_DURATION = {
   getExpenses: config.cache.ttl / 2,           // Half the base TTL
   getFilteredExpenses: config.cache.ttl / 2,   // Half the base TTL
   activate: config.cache.ttl * 24,             // 24x longer
-  getInvoice: config.cache.ttl / 2             // Half the base TTL
+  getInvoice: config.cache.ttl / 2,            // Half the base TTL
+  getPackingList: config.cache.ttl / 2         // Half the base TTL
 }
 
 // Get cache duration for an action
