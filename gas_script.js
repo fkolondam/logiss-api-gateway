@@ -6,6 +6,7 @@ const USER_SHEET_ID = "AAA"
 const SESSION_SHEET_ID = "AAA"
 const EXPENSES_SHEET_ID = "DDD"
 const DELIVERY_SHEET_ID = "EEE"
+const DELIVERY_ORDER_SHEET_ID = "FFF"
 
 const APP_NAME = "Logiss Delivery App | RDA"
 const APP_URL = "URL" // Ganti dengan URL aplikasi
@@ -145,6 +146,8 @@ function doGet(e) {
       return getActiveSessions(getParam(e, 'branch'))
     case 'logout':
       return handleLogout({ email: getParam(e, 'email') })
+    case 'getPackingList':
+      return getPackingList(getParam(e, 'branch'), getParam(e, 'date'))
     default:
       return sendError('Invalid action')
   }
@@ -270,7 +273,7 @@ function isVehicleAvailable(vehicleNumber) {
 function handleCheckIn(data) {
   try {
     // Validasi data yang diterima
-    if (!data.branch || !data.vehicleNumber || !data.checkInTime || !data.initialOdometer || !data.checkInPhoto || !data.location) {
+    if (!data.branch || !data.vehicleNumber || !data.checkInTime || !data.initialOdometer || !data.checkInPhoto || !data.location || !data.helperName) {
       return sendError('Data yang diperlukan tidak lengkap');
     }
 
@@ -337,7 +340,8 @@ function handleCheckIn(data) {
         '',
         JSON.stringify(data.location),
         '',
-        'Active'
+        'Active',
+        data.helperName
       ]);
 
       return sendResponse({
@@ -345,7 +349,10 @@ function handleCheckIn(data) {
         message: 'Check-in berhasil',
         data: {
           sessionId: sessionId,
-          checkInPhotoUrl: uploadResult.url
+          checkInPhotoUrl: uploadResult.url,
+          helperName: data.helperName,
+          vehicleNumber: data.vehicleNumber,
+          initialOdometer: data.initialOdometer
         }
       });
 
@@ -1888,6 +1895,57 @@ function getDeliveriesContext(data) {
   } catch (error) {
     console.error('Get deliveries context error:', error)
     return sendError('Terjadi kesalahan saat mengambil data pengiriman')
+  }
+}
+
+function getPackingList(branch, date) {
+  try {
+    // Validate required parameters
+    if (!branch || !date) {
+      Logger.log('Missing required parameters');
+      return sendError('Parameter branch dan date diperlukan');
+    }
+
+    // Get spreadsheet and data
+    const sheet = SpreadsheetApp.openById(DELIVERY_ORDER_SHEET_ID).getSheetByName('DO');
+    const data = sheet.getDataRange().getValues();
+    const headers = data.shift(); // Remove header row
+
+    // Process data
+    const packingLists = data
+      .filter(row => {
+        // Match branch
+        if (row[0] !== branch) return false;
+        
+        // Compare dates (m/d/yyyy format)
+        const rowDate = formatDate(new Date(row[1]));
+        return rowDate === date;
+      })
+      .map(row => ({
+        branchName: row[0],
+        date: formatDate(new Date(row[1])),
+        packlistNumber: row[2],
+        invoice: {
+          noFaktur: row[3]
+        },
+        vehicleNumber: row[4],
+        driverName: row[5],
+        helperName: row[6]
+      }));
+
+    return sendResponse({
+      success: true,
+      data: {
+        packingLists: packingLists,
+        total: packingLists.length,
+        branch: branch,
+        date: date
+      }
+    });
+
+  } catch (error) {
+    Logger.log(`Error in getPackingList: ${error}`);
+    return sendError('Gagal mengambil data packing list: ' + error.toString());
   }
 }
 
