@@ -159,39 +159,10 @@ async function fetchGas(action, data = null) {
       }
     }
     
-    // Debug logs
-    if (options.body) {
-      const parsedBody = JSON.parse(options.body)
-      logger.debug('GAS Request Details', {
-        action,
-        method: options.method,
-        url: url.toString().replace(GAS_API_KEY, '[REDACTED]'),
-        body: {
-          ...parsedBody,
-          data: parsedBody.data ? {
-            ...parsedBody.data,
-            hashedPassword: parsedBody.data.hashedPassword ? '[REDACTED]' : undefined
-          } : undefined
-        }
-      })
-    } else {
-      logger.debug('GAS Request Details', {
-        action,
-        method: options.method,
-        url: url.toString().replace(GAS_API_KEY, '[REDACTED]')
-      })
-    }
-
     const response = await fetch(url.toString(), options)
     const responseText = await response.text()
     
-    // Debug logs for response
-    logger.debug('GAS Response Details', {
-      status: response.status,
-      rawResponse: responseText.length > 1000 ? 
-        `${responseText.substring(0, 1000)}... [truncated]` : 
-        responseText
-    })
+    logger.request(`${action.toUpperCase()} ${options.method}`)
 
     // Handle HTML error responses
     if (responseText.includes('<!DOCTYPE html>')) {
@@ -213,13 +184,7 @@ async function fetchGas(action, data = null) {
       throw new Error('Invalid JSON response from GAS')
     }
     
-    // Debug logs for parsed response
-    logger.debug('GAS Parsed Response', {
-      success: responseData.success,
-      hasData: !!responseData.data,
-      hasMessage: !!responseData.message,
-      error: !responseData.success ? responseData.message || 'No error message' : undefined
-    })
+    logger.response(responseData.message || (responseData.success ? 'Success' : 'Failed'), responseData)
 
     // Handle error responses
     if (responseData.success === false) {

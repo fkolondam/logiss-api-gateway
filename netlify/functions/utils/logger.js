@@ -37,42 +37,40 @@ function sanitizeData(data) {
 
 const logger = {
     debug: (message, data = {}) => {
-        if (shouldLog('debug')) {
-            console.log(`[DEBUG] ${message}`, sanitizeData(data))
+        if (shouldLog('debug') && config.env === 'development') {
+            console.log(`\x1b[90m[DEBUG] ${message}\x1b[0m`)
         }
     },
     
     info: (message, data = {}) => {
         if (shouldLog('info')) {
-            console.log(`[INFO] ${message}`, sanitizeData(data))
+            console.log(`\x1b[32m[INFO] ${message}\x1b[0m`)
         }
     },
     
     warn: (message, data = {}) => {
         if (shouldLog('warn')) {
-            console.warn(`[WARN] ${message}`, sanitizeData(data))
+            console.warn(`\x1b[33m[WARN] ${message}\x1b[0m`)
         }
     },
     
     error: (message, error = null) => {
         if (shouldLog('error')) {
-            console.error(`[ERROR] ${message}`, error ? {
-                message: error.message,
-                stack: config.env === 'development' ? error.stack : undefined
-            } : null)
+            console.error(`\x1b[31m[ERROR] ${message}${error ? ': ' + error.message : ''}\x1b[0m`)
         }
     },
 
     // Special methods for request/response logging
     request: (message, data = {}) => {
-        if (shouldLog('debug') && config.logging.requestBody) {
-            console.log(`[REQUEST] ${message}`, sanitizeData(data))
+        if (shouldLog('debug') && config.logging.requestBody && config.env === 'development') {
+            console.log(`\x1b[36m[REQUEST] ${message}\x1b[0m`)
         }
     },
 
     response: (message, data = {}) => {
-        if (shouldLog('debug') && config.logging.responseBody) {
-            console.log(`[RESPONSE] ${message}`, sanitizeData(data))
+        if (shouldLog('info')) {
+            const status = data.success ? '\x1b[32m✓' : '\x1b[31m✗'
+            console.log(`${status} ${message}\x1b[0m`)
         }
     }
 }
