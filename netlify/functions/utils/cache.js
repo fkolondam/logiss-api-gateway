@@ -17,7 +17,8 @@ const TTL_CONFIG = {
   vehicle: 43200,   // 12 hours
   invoice: 3600,    // 1 hour
   delivery: 1800,   // 30 minutes
-  expenses: 1800    // 30 minutes
+  expenses: 1800,   // 30 minutes
+  'packing-list': 1800    // 30 minutes
 };
 
 // Key generators untuk berbagai tipe data

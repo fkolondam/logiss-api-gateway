@@ -9,7 +9,7 @@ const logger = require('./utils/logger')
 const ENV = process.env.NODE_ENV || 'development'
 
 // Routes yang memerlukan authentication
-const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices', 'invoices', 'invoice']
+const PROTECTED_ROUTES = ['checkin', 'checkout', 'delivery', 'expenses', 'available-invoices', 'invoices', 'invoice', 'packing-list']
 
 // Validasi file upload
 function validateFileUpload(data, fieldName) {
@@ -667,6 +667,35 @@ exports.handler = async (event) => {
             }, { origin })
           }
         }
+        break
+
+      case 'packing-list':
+        if (!params.branch || !params.date) {
+          return optimizedResponse(400, {
+            success: false,
+            error: 'Branch dan date parameter diperlukan'
+          }, { origin })
+        }
+
+        const packingListDate = new Date(params.date)
+        if (isNaN(packingListDate.getTime())) {
+          return optimizedResponse(400, {
+            success: false,
+            error: 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD'
+          }, { origin })
+        }
+
+        const packingListMonth = packingListDate.getMonth() + 1
+        const packingListDay = packingListDate.getDate()
+        const packingListYear = packingListDate.getFullYear()
+        const formattedPackingListDate = `${packingListMonth}/${packingListDay}/${packingListYear}`
+
+        response = await cacheService.getOrFetchData(
+          'packing-list',
+          { branch: params.branch, date: formattedPackingListDate },
+          fetchGas,
+          'getPackingList'
+        )
         break
 
       default:
