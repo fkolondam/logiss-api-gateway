@@ -41,23 +41,7 @@ exports.handler = async (event) => {
     const body = event.body ? JSON.parse(event.body) : null
     const origin = event.headers.origin
 
-    // Debug logging for request
-    logger.debug('Request Details', {
-      path,
-      method: event.httpMethod,
-      headers: {
-        ...event.headers,
-        authorization: event.headers.authorization ? '[REDACTED]' : undefined
-      },
-      params,
-      body: body ? {
-        ...body,
-        data: body.data ? {
-          ...body.data,
-          hashedPassword: body.data.hashedPassword ? '[REDACTED]' : undefined
-        } : undefined
-      } : null
-    })
+    logger.request(`${path.toUpperCase()} ${event.httpMethod}`)
 
     // Validate authentication for protected routes
     if (PROTECTED_ROUTES.includes(path)) {
@@ -705,33 +689,18 @@ exports.handler = async (event) => {
         }, { origin })
     }
 
-    // Debug logging for response
-    if (!response?.success) {
-      // Determine status code based on error message
-      const statusCode = response?.error?.includes('tidak ditemukan') ? 404 :
-                        response?.error?.includes('tidak lengkap') || 
-                        response?.error?.includes('sedang dalam perjalanan') ||
-                        response?.error?.includes('sudah selesai') ||
-                        response?.error?.includes('harus lebih besar') ||
-                        response?.error?.includes('terlalu jauh') ? 400 :
-                        500
-      
-      logger.warn('Error Response:', {
-        statusCode,
-        success: false,
-        error: response?.error || 'Unknown error',
-        data: response?.data
-      })
-    return optimizedResponse(statusCode, response, { origin })
-    }
+    // Determine status code based on error message
+    const statusCode = !response?.success ? (
+      response?.error?.includes('tidak ditemukan') ? 404 :
+      response?.error?.includes('tidak lengkap') || 
+      response?.error?.includes('sedang dalam perjalanan') ||
+      response?.error?.includes('sudah selesai') ||
+      response?.error?.includes('harus lebih besar') ||
+      response?.error?.includes('terlalu jauh') ? 400 : 500
+    ) : 200;
 
-    logger.debug('Success Response:', {
-      statusCode: 200,
-      success: true,
-      hasData: !!response?.data,
-      dataType: response?.data ? typeof response.data : null
-    })
-    return optimizedResponse(200, response, { origin })
+    logger.response(response?.message || (response?.success ? 'Success' : 'Failed'), response)
+    return optimizedResponse(statusCode, response, { origin })
   } catch (error) {
     logger.error('API Error:', error)
     return optimizedResponse(500, {

@@ -1,4 +1,5 @@
 const NodeCache = require('node-cache');
+const logger = require('./logger');
 
 // Initialize cache with default settings
 const cache = new NodeCache({
@@ -67,15 +68,13 @@ const cacheService = {
     const cachedData = cache.get(cacheKey);
 
     if (cachedData) {
-      console.log(`Cache hit for ${cacheKey}`);
+      logger.debug(`Cache hit: ${action}`);
       return cachedData;
     }
 
-    console.log(`Cache miss for ${cacheKey}, fetching from GAS`);
     const response = await fetchGas(action, params);
 
     if (response.success) {
-      console.log(`Caching response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
       cache.set(cacheKey, response, TTL_CONFIG[type]);
     }
 
@@ -90,18 +89,16 @@ const cacheService = {
     const cachedData = cache.get(cacheKey);
 
     if (cachedData) {
-      console.log(`Cache hit for invoices: ${cacheKey}`);
+      logger.debug(`Cache hit: invoices`);
       return cachedData;
     }
 
-    console.log(`Cache miss for invoices: ${cacheKey}, fetching from GAS`);
     const response = await fetchGas(
       ranged ? 'getRangedInvoiceList' : 'getInvoiceList',
       params
     );
 
     if (response.success) {
-      console.log(`Caching invoice response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
       cache.set(cacheKey, response, TTL_CONFIG[type]);
     }
 
@@ -114,15 +111,13 @@ const cacheService = {
     const cachedData = cache.get(cacheKey);
 
     if (cachedData) {
-      console.log(`Cache hit for vehicles: ${cacheKey}`);
+      logger.debug(`Cache hit: vehicles`);
       return cachedData;
     }
 
-    console.log(`Cache miss for vehicles: ${cacheKey}, fetching from GAS`);
     const response = await fetchGas('getVehicleData', branch);
 
     if (response.success) {
-      console.log(`Caching vehicles response for ${cacheKey}`);
       cache.set(cacheKey, response, TTL_CONFIG[type]);
     }
 
@@ -145,18 +140,16 @@ const cacheService = {
     const cachedData = cache.get(cacheKey);
 
     if (cachedData) {
-      console.log(`Cache hit for expenses: ${cacheKey}`);
+      logger.debug(`Cache hit: expenses`);
       return cachedData;
     }
 
-    console.log(`Cache miss for expenses: ${cacheKey}, fetching from GAS`);
     const response = await fetchGas(
       params.context ? 'getFilteredExpenses' : 'getExpenses',
       params
     );
 
     if (response.success) {
-      console.log(`Caching expenses response for ${cacheKey} with TTL: ${TTL_CONFIG[type] || 3600}s`);
       cache.set(cacheKey, response, TTL_CONFIG[type]);
     }
 
