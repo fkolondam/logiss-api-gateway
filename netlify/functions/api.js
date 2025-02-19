@@ -451,7 +451,7 @@ exports.handler = async (event) => {
 
         try {
           // Validate required fields
-          const checkinRequired = ['branch', 'vehicleNumber', 'checkInTime', 'initialOdometer', 'checkInPhoto', 'location']
+          const checkinRequired = ['branch', 'vehicleNumber', 'checkInTime', 'initialOdometer', 'checkInPhoto', 'location', 'helperName']
           const missingCheckin = checkinRequired.filter(field => !body.data[field])
           if (missingCheckin.length > 0) {
             throw new Error(`Data tidak lengkap. Field yang diperlukan: ${missingCheckin.join(', ')}`)
