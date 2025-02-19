@@ -159,8 +159,35 @@ async function fetchGas(action, data = null) {
       }
     }
     
-    const response = await fetch(url.toString(), options)
-    const responseText = await response.text()
+    let response, responseText;
+    
+    // Special handling for getAvailableInvoices due to potential timeout
+    if (action === 'getAvailableInvoices') {
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, 30000);
+
+      try {
+        response = await fetch(url.toString(), { 
+          ...options, 
+          signal: controller.signal,
+          timeout: 30000,
+          size: 0,
+          follow: 5
+        });
+        responseText = await response.text();
+        clearTimeout(timeout);
+      } catch (error) {
+        clearTimeout(timeout);
+        throw new Error('Request timeout for getAvailableInvoices. Please try again.');
+      }
+    } else {
+      // Normal fetch for other endpoints
+      response = await fetch(url.toString(), options);
+      responseText = await response.text();
+    }
     
     logger.request(`${action.toUpperCase()} ${options.method}`)
 
